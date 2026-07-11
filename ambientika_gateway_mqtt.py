@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import signal
 import sys
 import threading
@@ -30,8 +31,8 @@ CONTROL_SEND_INTERVAL = 0.5
 
 MQTT_HOST = "192.0.2.204"
 MQTT_PORT = 1883
-MQTT_USER = "mqtt_user"
-MQTT_PASSWORD = "REDACTED_PASSWORD"
+MQTT_USER = os.environ.get("AMBIENTIKA_MQTT_USER", "")
+MQTT_PASSWORD = os.environ.get("AMBIENTIKA_MQTT_PASSWORD", "")
 
 BASE_TOPIC = "ambientika"
 
