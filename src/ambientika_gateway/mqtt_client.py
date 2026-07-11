@@ -7,12 +7,19 @@ from typing import Any
 
 import paho.mqtt.client as mqtt
 
+from . import __version__
 from .config import MqttConfig
+from .discovery import (
+    discovery_topic,
+    serialize_discovery_payload,
+)
 from .protocol import Mode
 from .state import GatewaySnapshot, GatewayState
 
 
 LOGGER = logging.getLogger(__name__)
+
+HOME_ASSISTANT_STATUS_TOPIC = "homeassistant/status"
 
 
 OverrideCallback = Callable[[bool], None]
@@ -35,9 +42,15 @@ class AmbientikaMqttClient:
     """
     MQTT-Anbindung des Ambientika-Gateways.
 
-    Das Modul verwaltet ausschließlich MQTT-Kommunikation. Änderungen
-    an der seriellen Verbindung oder der Override-Sequenz werden über
-    Callbacks an die Gateway-Schicht weitergegeben.
+    Dieses Modul verwaltet:
+
+    - die Verbindung zum MQTT-Broker,
+    - MQTT-Befehle für Override, Modus und Lüfterstufe,
+    - die Veröffentlichung des Gateway-Zustands,
+    - Home-Assistant-MQTT-Device-Discovery.
+
+    Serielle Kommunikation und Override-Sequenzen werden nicht hier,
+    sondern in der Gateway-Schicht verarbeitet.
     """
 
     def __init__(
@@ -97,7 +110,8 @@ class AmbientikaMqttClient:
 
         if self._stopped:
             raise RuntimeError(
-                "Ein bereits gestoppter MQTT-Client kann nicht neu gestartet werden"
+                "Ein bereits gestoppter MQTT-Client kann nicht "
+                "erneut gestartet werden"
             )
 
         LOGGER.info(
@@ -117,7 +131,7 @@ class AmbientikaMqttClient:
 
     def stop(self) -> None:
         """
-        Veröffentlicht den Offline-Status und beendet die MQTT-Verbindung.
+        Veröffentlicht den Offline-Status und beendet MQTT.
         """
 
         if self._stopped:
@@ -133,7 +147,9 @@ class AmbientikaMqttClient:
                     retain=True,
                     qos=1,
                 )
+
                 self._client.disconnect()
+
         finally:
             self._client.loop_stop()
             self._connected_event.clear()
@@ -155,7 +171,7 @@ class AmbientikaMqttClient:
         qos: int = 0,
     ) -> mqtt.MQTTMessageInfo:
         """
-        Veröffentlicht einen Wert unterhalb des konfigurierten Base-Topics.
+        Veröffentlicht einen Wert unterhalb des Base-Topics.
         """
 
         if retain is None:
@@ -175,12 +191,53 @@ class AmbientikaMqttClient:
             retain=retain,
         )
 
+    def publish_discovery(self) -> mqtt.MQTTMessageInfo:
+        """
+        Veröffentlicht die Home-Assistant-Device-Discovery-Konfiguration.
+
+        Die Discovery-Nachricht wird retained gespeichert.
+        """
+
+        topic = discovery_topic(self._config)
+
+        payload = serialize_discovery_payload(
+            self._config,
+            software_version=__version__,
+        )
+
+        LOGGER.info(
+            "Veröffentliche Home-Assistant-Discovery auf %s",
+            topic,
+        )
+
+        return self._client.publish(
+            topic,
+            payload,
+            qos=1,
+            retain=True,
+        )
+
+    def remove_discovery(self) -> mqtt.MQTTMessageInfo:
+        """
+        Entfernt die Discovery-Konfiguration aus Home Assistant.
+
+        Diese Methode ist nur für eine bewusste Deinstallation gedacht.
+        Sie darf beim normalen Herunterfahren nicht aufgerufen werden.
+        """
+
+        return self._client.publish(
+            discovery_topic(self._config),
+            "",
+            qos=1,
+            retain=True,
+        )
+
     def publish_snapshot(
         self,
         snapshot: GatewaySnapshot | None = None,
     ) -> None:
         """
-        Veröffentlicht den vollständigen aktuellen Gateway-Zustand.
+        Veröffentlicht den vollständigen Gateway-Zustand.
         """
 
         if snapshot is None:
@@ -191,9 +248,16 @@ class AmbientikaMqttClient:
         active = snapshot.active
         fan_reply = snapshot.fan_reply
 
-        self.publish("availability", "online", qos=1)
+        self.publish(
+            "availability",
+            "online",
+            qos=1,
+        )
 
-        self.publish("state/control_source", active.source)
+        self.publish(
+            "state/control_source",
+            active.source,
+        )
 
         self.publish(
             "state/override",
@@ -230,7 +294,11 @@ class AmbientikaMqttClient:
         )
         self.publish(
             "state/panel_speed",
-            panel.speed if panel.speed is not None else "",
+            (
+                panel.speed
+                if panel.speed is not None
+                else ""
+            ),
         )
         self.publish(
             "state/panel_phase",
@@ -247,7 +315,11 @@ class AmbientikaMqttClient:
         )
         self.publish(
             "state/active_speed",
-            active.speed if active.speed is not None else "",
+            (
+                active.speed
+                if active.speed is not None
+                else ""
+            ),
         )
         self.publish(
             "state/active_phase",
@@ -278,6 +350,7 @@ class AmbientikaMqttClient:
                 else ""
             ),
         )
+
         self.publish(
             "diagnostic/fan_reply_age_seconds",
             (
@@ -301,7 +374,11 @@ class AmbientikaMqttClient:
         )
         self.publish(
             "state/panel_speed",
-            panel.speed if panel.speed is not None else "",
+            (
+                panel.speed
+                if panel.speed is not None
+                else ""
+            ),
         )
         self.publish(
             "state/panel_phase",
@@ -332,6 +409,10 @@ class AmbientikaMqttClient:
             "state/override_frame",
             override.raw_frame or "",
         )
+        self.publish(
+            "state/override_generation",
+            override.generation,
+        )
 
     def publish_active_state(self) -> None:
         snapshot = self._state.snapshot()
@@ -351,7 +432,11 @@ class AmbientikaMqttClient:
         )
         self.publish(
             "state/active_speed",
-            active.speed if active.speed is not None else "",
+            (
+                active.speed
+                if active.speed is not None
+                else ""
+            ),
         )
         self.publish(
             "state/active_phase",
@@ -377,6 +462,7 @@ class AmbientikaMqttClient:
 
     def publish_error(self, message: str) -> None:
         LOGGER.error("%s", message)
+
         self.publish(
             "diagnostic/error",
             message,
@@ -406,7 +492,11 @@ class AmbientikaMqttClient:
             self._connected_event.clear()
             return
 
-        LOGGER.info("MQTT verbunden: %s", reason_code)
+        LOGGER.info(
+            "MQTT verbunden: %s",
+            reason_code,
+        )
+
         self._connected_event.set()
 
         client.subscribe(
@@ -423,9 +513,15 @@ class AmbientikaMqttClient:
                     self.topic("speed/set"),
                     0,
                 ),
+                (
+                    HOME_ASSISTANT_STATUS_TOPIC,
+                    0,
+                ),
             ]
         )
 
+        # Erst Discovery veröffentlichen, danach die Zustände.
+        self.publish_discovery()
         self.publish_snapshot()
 
     def _handle_disconnect(
@@ -439,7 +535,9 @@ class AmbientikaMqttClient:
         self._connected_event.clear()
 
         if self._stopped:
-            LOGGER.info("MQTT regulär getrennt")
+            LOGGER.info(
+                "MQTT regulär getrennt"
+            )
         else:
             LOGGER.warning(
                 "MQTT-Verbindung unterbrochen: %s",
@@ -457,9 +555,11 @@ class AmbientikaMqttClient:
                 "utf-8",
                 errors="strict",
             ).strip()
+
         except UnicodeDecodeError:
             self.publish_error(
-                f"Ungültige UTF-8-Nutzlast auf {message.topic}"
+                f"Ungültige UTF-8-Nutzlast auf "
+                f"{message.topic}"
             )
             return
 
@@ -468,6 +568,17 @@ class AmbientikaMqttClient:
             message.topic,
             payload,
         )
+
+        if message.topic == HOME_ASSISTANT_STATUS_TOPIC:
+            if payload.lower() == "online":
+                LOGGER.info(
+                    "Home-Assistant-Birth-Nachricht empfangen"
+                )
+
+                self.publish_discovery()
+                self.publish_snapshot()
+
+            return
 
         if message.topic == self.topic("override/set"):
             self._process_override_command(payload)
@@ -492,13 +603,26 @@ class AmbientikaMqttClient:
     ) -> None:
         normalized = payload.strip().lower()
 
-        truthy = {"on", "1", "true", "yes"}
-        falsy = {"off", "0", "false", "no"}
+        truthy = {
+            "on",
+            "1",
+            "true",
+            "yes",
+        }
+
+        falsy = {
+            "off",
+            "0",
+            "false",
+            "no",
+        }
 
         if normalized in truthy:
             enabled = True
+
         elif normalized in falsy:
             enabled = False
+
         else:
             self.publish_error(
                 f"Ungültiger Override-Wert: {payload!r}"
@@ -523,10 +647,12 @@ class AmbientikaMqttClient:
 
         try:
             mode = MQTT_MODE_NAMES[normalized]
+
         except KeyError:
             supported = ", ".join(
                 sorted(MQTT_MODE_NAMES)
             )
+
             self.publish_error(
                 f"Unbekannter Modus {payload!r}; "
                 f"erlaubt: {supported}"
@@ -549,6 +675,7 @@ class AmbientikaMqttClient:
     ) -> None:
         try:
             speed = int(payload)
+
         except ValueError:
             self.publish_error(
                 f"Ungültige Lüfterstufe: {payload!r}"
@@ -557,7 +684,8 @@ class AmbientikaMqttClient:
 
         if speed not in (1, 2, 3):
             self.publish_error(
-                f"Lüfterstufe muss 1, 2 oder 3 sein, erhalten: {speed}"
+                "Lüfterstufe muss 1, 2 oder 3 sein, "
+                f"erhalten: {speed}"
             )
             return
 
