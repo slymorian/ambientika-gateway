@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Zugangsdaten und lokale Konfiguration
+config.py
+.env
+*.secret
+*.secrets
+
+# Logs und Aufzeichnungen
+logs/*
+!logs/.gitkeep
+*.log
+*.csv
+
+# Editoren und Betriebssystem
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Temporäre Dateien
+*.tmp
+*.bak
+*~
+ambientika_gateway_working.py
