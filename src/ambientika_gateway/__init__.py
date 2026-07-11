@@ -1,0 +1,5 @@
+"""
+Ambientika RS485 Gateway.
+"""
+
+__version__ = "0.1.0"

@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ambientika-gateway"
+version = "0.1.0"
+description = "RS485 and MQTT gateway for wired Südwind Ambientika ventilation systems"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "paho-mqtt>=2.0,<3.0",
+    "pyserial>=3.5,<4.0",
+]
+
+authors = [
+    { name = "slymorian", email = "12345678+slymorian@users.noreply.github.com" }
+]
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+]
+
+[project.scripts]
+ambientika-gateway = "ambientika_gateway.__main__:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
