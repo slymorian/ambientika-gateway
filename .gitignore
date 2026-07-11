@@ -7,10 +7,13 @@ venv/
 
 # Zugangsdaten und lokale Konfiguration
 # Lokale Konfiguration
+# Zugangsdaten und lokale Konfiguration
 .env
+.env.local
 config_local.py
 *.secret
 *.secrets
+
 
 # Logs und Aufzeichnungen
 logs/*
