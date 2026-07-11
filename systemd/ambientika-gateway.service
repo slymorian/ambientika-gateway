@@ -1,0 +1,29 @@
+[Unit]
+Description=Ambientika RS485 MQTT Gateway
+Documentation=https://github.com/slymorian/ambientika-gateway
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+
+User=stefan
+Group=stefan
+SupplementaryGroups=dialout
+
+WorkingDirectory=/home/stefan/ambientika
+EnvironmentFile=/home/stefan/ambientika/.env
+
+ExecStartPre=/usr/bin/test -e /dev/ambientika-panel
+ExecStartPre=/usr/bin/test -e /dev/ambientika-fans
+
+ExecStart=/home/stefan/ambientika/.venv/bin/ambientika-gateway
+
+Restart=always
+RestartSec=5
+
+TimeoutStopSec=10
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target
