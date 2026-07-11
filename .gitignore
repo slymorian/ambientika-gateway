@@ -6,8 +6,9 @@ __pycache__/
 venv/
 
 # Zugangsdaten und lokale Konfiguration
-config.py
+# Lokale Konfiguration
 .env
+config_local.py
 *.secret
 *.secrets
 
