@@ -32,3 +32,11 @@ Thumbs.db
 *.bak
 *~
 ambientika_gateway_working.py
+
+
+# Python build artifacts
+*.egg-info/
+
+# Bytecode
+__pycache__/
+*.py[cod]
