@@ -536,8 +536,14 @@ def fixed_command_frame(mode: Mode, speed: int) -> str:
     try:
         return FIXED_COMMAND_FRAMES[(mode, speed)]
     except KeyError as exc:
+        mode_name = (
+            mode.value
+            if isinstance(mode, Mode)
+            else repr(mode)
+        )
+
         raise ValueError(
-            f"Unsupported fixed mode/speed: {mode.value}/{speed}"
+            f"Unsupported fixed mode/speed: {mode_name}/{speed}"
         ) from exc
 
 
@@ -548,6 +554,14 @@ def alternating_sequence(
     try:
         return ALTERNATING_SEQUENCES[(mode, speed)]
     except KeyError as exc:
+        mode_name = (
+            mode.value
+            if isinstance(mode, Mode)
+            else repr(mode)
+        )
+
         raise ValueError(
-            f"Unsupported alternating mode/speed: {mode.value}/{speed}"
+            f"Unsupported alternating mode/speed: {mode_name}/{speed}"
         ) from exc
+
+
