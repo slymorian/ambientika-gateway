@@ -13,7 +13,7 @@ from .discovery import (
     discovery_topic,
     serialize_discovery_payload,
 )
-from .protocol import Mode
+from .protocol import Mode, mode_from_mqtt, mqtt_mode_values
 from .state import GatewaySnapshot, GatewayState
 
 
@@ -26,16 +26,6 @@ OverrideCallback = Callable[[bool], None]
 ModeCallback = Callable[[Mode], None]
 SpeedCallback = Callable[[int], None]
 
-
-MQTT_MODE_NAMES: dict[str, Mode] = {
-    "manual": Mode.MANUAL_ALTERNATING,
-    "manual_alternating": Mode.MANUAL_ALTERNATING,
-    "extract": Mode.EXTRACT,
-    "supply": Mode.SUPPLY,
-    "master_extract_slave_supply": Mode.MASTER_EXTRACT_SLAVE_SUPPLY,
-    "master_supply_slave_extract": Mode.MASTER_SUPPLY_SLAVE_EXTRACT,
-    "silent": Mode.SILENT,
-}
 
 
 class AmbientikaMqttClient:
@@ -646,18 +636,19 @@ class AmbientikaMqttClient:
         normalized = payload.strip().lower()
 
         try:
-            mode = MQTT_MODE_NAMES[normalized]
+            mode = mode_from_mqtt(normalized)
 
-        except KeyError:
-            supported = ", ".join(
-                sorted(MQTT_MODE_NAMES)
-            )
+        except ValueError:
+            supported = ", ".join(mqtt_mode_values())
 
             self.publish_error(
                 f"Unbekannter Modus {payload!r}; "
                 f"erlaubt: {supported}"
             )
             return
+
+
+
 
         if self._on_mode is not None:
             self._on_mode(mode)

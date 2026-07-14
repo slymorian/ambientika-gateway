@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .protocol import mqtt_mode_values
 
 import json
 import re
@@ -88,16 +89,20 @@ def build_discovery_payload(
         "name": "Ambientika Gateway",
         "manufacturer": DEVICE_MANUFACTURER,
         "model": DEVICE_MODEL,
-        "software_version": software_version,
+        "sw_version": software_version,
         "serial_number": identifier,
         "configuration_url": PROJECT_URL,
     }
 
+
     origin = {
         "name": PROJECT_NAME,
-        "software_version": software_version,
+        "sw_version": software_version,
         "support_url": PROJECT_URL,
     }
+
+
+
 
     components: dict[str, dict[str, Any]] = {
         # -------------------------------------------------
@@ -141,14 +146,9 @@ def build_discovery_payload(
                 config,
                 "state/selected_mode",
             ),
-            "options": [
-                "manual_alternating",
-                "extract",
-                "supply",
-                "master_extract_slave_supply",
-                "master_supply_slave_extract",
-                "silent",
-            ],
+            "options": mqtt_mode_values(),
+
+
             "icon": "mdi:fan-auto",
         },
 

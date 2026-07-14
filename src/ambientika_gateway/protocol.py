@@ -18,14 +18,142 @@ class FrameCategory(str, Enum):
 
 
 class Mode(str, Enum):
+    AUTOMATIC = "automatic"
+    MONITORING = "monitoring"
     MANUAL_ALTERNATING = "manual_alternating"
-    EXTRACT = "extract"
-    SUPPLY = "supply"
+    SILENT = "silent"
+    TIMED_EXTRACT = "timed_extract"
+
     MASTER_EXTRACT_SLAVE_SUPPLY = "master_extract_slave_supply"
     MASTER_SUPPLY_SLAVE_EXTRACT = "master_supply_slave_extract"
-    SILENT = "silent"
+
+    EXTRACT = "extract"
+    SUPPLY = "supply"
+
     UNKNOWN = "unknown"
 
+@dataclass(frozen=True)
+class ModeInfo:
+    mqtt_value: str
+    label_de: str
+    icon: str
+    supports_speed: bool = False
+    supports_humidity_level: bool = False
+    alternating: bool = False
+
+MODE_INFO: dict[Mode, ModeInfo] = {
+    Mode.AUTOMATIC: ModeInfo(
+        mqtt_value="automatic",
+        label_de="Automatisch",
+        icon="mdi:fan-auto",
+        supports_humidity_level=True,
+        alternating=True,
+    ),
+    Mode.MONITORING: ModeInfo(
+        mqtt_value="monitoring",
+        label_de="Überwachung",
+        icon="mdi:eye-outline",
+        supports_humidity_level=True,
+    ),
+    Mode.MANUAL_ALTERNATING: ModeInfo(
+        mqtt_value="manual_alternating",
+        label_de="Manuell",
+        icon="mdi:fan",
+        supports_speed=True,
+        alternating=True,
+    ),
+    Mode.SILENT: ModeInfo(
+        mqtt_value="silent",
+        label_de="Silent",
+        icon="mdi:weather-night",
+        alternating=True,
+    ),
+    Mode.TIMED_EXTRACT: ModeInfo(
+        mqtt_value="timed_extract",
+        label_de="Zeitgeschaltete Abluft",
+        icon="mdi:timer-outline",
+    ),
+    Mode.MASTER_EXTRACT_SLAVE_SUPPLY: ModeInfo(
+        mqtt_value="master_extract_slave_supply",
+        label_de="Master Abluft, Slave Zuluft",
+        icon="mdi:swap-horizontal",
+        supports_speed=True,
+    ),
+    Mode.MASTER_SUPPLY_SLAVE_EXTRACT: ModeInfo(
+        mqtt_value="master_supply_slave_extract",
+        label_de="Master Zuluft, Slave Abluft",
+        icon="mdi:swap-horizontal",
+        supports_speed=True,
+    ),
+    Mode.EXTRACT: ModeInfo(
+        mqtt_value="extract",
+        label_de="Abluft",
+        icon="mdi:arrow-collapse-up",
+        supports_speed=True,
+    ),
+    Mode.SUPPLY: ModeInfo(
+        mqtt_value="supply",
+        label_de="Zuluft",
+        icon="mdi:arrow-collapse-down",
+        supports_speed=True,
+    ),
+}
+
+
+def selectable_modes() -> tuple[Mode, ...]:
+    return tuple(MODE_INFO)
+
+
+def mqtt_mode_values() -> list[str]:
+    return [
+        MODE_INFO[mode].mqtt_value
+        for mode in selectable_modes()
+    ]
+
+
+def mode_from_mqtt(value: str) -> Mode:
+    normalized = value.strip().lower()
+
+    # Alias für bisherige MQTT-Befehle
+    if normalized == "manual":
+        return Mode.MANUAL_ALTERNATING
+
+    for mode, info in MODE_INFO.items():
+        if info.mqtt_value == normalized:
+            return mode
+
+    supported = ", ".join(mqtt_mode_values())
+
+    raise ValueError(
+        f"Unknown Ambientika mode {value!r}; supported: {supported}"
+    )
+
+
+
+def mode_label_de(mode: Mode) -> str:
+    return MODE_INFO[mode].label_de
+
+
+def mode_icon(mode: Mode) -> str:
+    return MODE_INFO[mode].icon
+    for mode, info in MODE_INFO.items():
+        if info.mqtt_value == normalized:
+            return mode
+
+    supported = ", ".join(mqtt_mode_values())
+
+    raise ValueError(
+        f"Unknown Ambientika mode {value!r}; supported: {supported}"
+    )
+
+
+def mode_label_de(mode: Mode) -> str:
+    info = MODE_INFO.get(mode)
+
+    if info is None:
+        return "Unbekannt"
+
+    return info.label_de
 
 class Phase(str, Enum):
     PHASE_A = "phase_a"
@@ -34,6 +162,15 @@ class Phase(str, Enum):
     FIXED = "fixed"
     UNKNOWN = "unknown"
 
+@dataclass(frozen=True)
+class ModeInfo:
+    mqtt_value: str
+    label_de: str
+    icon: str
+    supports_speed: bool = False
+    supports_humidity_level: bool = False
+    alternating: bool = False
+
 
 @dataclass(frozen=True)
 class DecodedFrame:
@@ -41,6 +178,7 @@ class DecodedFrame:
     category: FrameCategory
     mode: Mode = Mode.UNKNOWN
     speed: int | None = None
+    humidity_level: int | None = None
     phase: Phase = Phase.UNKNOWN
     checksum_valid: bool = False
     description: str = ""
