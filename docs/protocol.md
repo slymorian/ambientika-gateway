@@ -71,6 +71,63 @@ Humidity threshold set to **1 drop**
 
 ---
 
+---
+
+# Silent mode
+
+The Silent (night) mode uses alternating heat-recovery ventilation.
+
+Observed sequence:
+
+| Phase | Frame | Duration | Status |
+|------|---------|---------:|:------:|
+| Mode selected (transition) | `0132083B` | ~1 s | ✅ |
+| Mode active | `01320033` | ~9 s | ✅ |
+| Direction phase A | `01280029` | ~60 s | ✅ |
+| Transition | `01200021` | ~10 s | ✅ |
+| Direction phase B | `01240025` | ~60 s | ✅ |
+| Transition | `01200021` | ~10 s | ✅ |
+
+Repeated observation confirms that the sequence continues cyclically.
+
+Characteristics:
+
+- alternating heat recovery
+- humidity sensor inactive
+- twilight sensor inactive
+- reduced airflow
+
+---
+
+# Timed extract mode
+
+According to the manufacturer documentation, this mode forces extract
+ventilation for approximately 20 minutes before returning to the
+previous operating mode.
+
+Observed activation:
+
+| Frame | Meaning | Status |
+|-------|---------|:------:|
+| `0132083B` | Mode transition | 🟡 |
+| `01320033` | Mode transition | 🟡 |
+| `01370036` | Extract, speed 3 | ✅ |
+
+Observed timeout:
+
+| Frame | Meaning | Status |
+|-------|---------|:------:|
+| `01330436` | Return transition | 🟡 |
+| `01360433` | Return to previous mode (Automatic, humidity alarm active) | ✅ |
+
+Measured duration:
+
+- approximately **20 minutes**
+
+Status: 🟡 Mostly understood
+---
+
+
 # Short frames
 
 ## Panel → Fans

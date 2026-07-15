@@ -300,46 +300,89 @@ Open questions:
 Status: ⬜ Not yet systematically tested
 
 ---
-
 ## Silent mode
 
-Manufacturer name: Night mode.
-
-Expected behavior:
+Manufacturer description:
 
 - heat recovery
 - humidity sensor inactive
 - twilight sensor inactive
-- reduced airflow / quiet operation
+- reduced airflow
 
-Open questions:
+Observed activation:
 
-- complete direction sequence
-- timing
-- influence of the globally selected humidity threshold
-- whether silent mode uses the same phases as manual speed 1
+```text
+0132083B
+01320033
+```
 
-Status: ⬜ Incomplete
+Observed repeating sequence:
+
+```text
+01280029
+01200021
+01240025
+01200021
+```
+
+Measured timing:
+
+| Phase | Duration |
+|-------|---------:|
+| Direction phase A | ~60 s |
+| Transition | ~10 s |
+| Direction phase B | ~60 s |
+| Transition | ~10 s |
+
+The sequence repeats continuously.
+
+Current interpretation:
+
+| Frame | Meaning | Status |
+|-------|---------|:------:|
+| `0132083B` | Generic mode transition | ✅ |
+| `01320033` | Generic mode transition | ✅ |
+| `01280029` | Direction phase A | ✅ |
+| `01200021` | Direction transition | ✅ |
+| `01240025` | Direction phase B | ✅ |
+
+The sequence is structurally identical to the manual alternating mode but uses its own dedicated frame set.
+
+Status: ✅ Confirmed
+
 
 ---
 
 ## Timed extract mode
 
-Expected behavior:
+Observed sequence:
 
-- extract operation for a timed period
-- humidity and twilight sensors inactive
+```
+0132083B
+01320033
+01370036
+```
 
-Open questions:
+Twenty minutes later:
 
-- whether the duration is controlled entirely by the wall controller
-- whether a separate start frame is used
-- whether stable extract frames are reused
-- whether byte 3 contains a timer flag
+```
+01330436
+01360433
+```
 
-Status: ⬜ Not tested
+Interpretation:
+
+- `0132083B` and `01320033` appear to be generic mode-transition frames.
+- During the timed interval the controller continuously transmits the normal Extract Speed 3 frame (`01370036`).
+- After approximately 20 minutes the controller restores the previous operating mode.
+- Because humidity was still above the configured threshold, the controller returned directly to the automatic humidity-alarm frame (`01360433`).
+
+Open question:
+
+- Does `01330436` represent a generic return transition or an alarm-specific return frame?
 
 ---
+
 
 ## Short request and response frames
 

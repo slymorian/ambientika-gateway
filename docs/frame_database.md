@@ -26,12 +26,16 @@ The fourth byte is the XOR checksum of bytes 1–3.
 | `0126082F` | Panel → Fans | Master extract, slave supply | Speed 2 | Setting change | ✅ |
 | `01270026` | Panel → Fans | Master extract, slave supply | Speed 3 | Stable | ✅ |
 | `0127082E` | Panel → Fans | Master extract, slave supply | Speed 3 | Setting change | ✅ |
+| `01280029` | Panel → Fans | Silent | Direction phase A | Stable | ✅ |
 | `01290028` | Panel → Fans | Master supply, slave extract | Speed 1 | Stable | ✅ |
 | `01290820` | Panel → Fans | Master supply, slave extract | Speed 1 | Setting change | ✅ |
 | `012A002B` | Panel → Fans | Master supply, slave extract | Speed 2 | Stable | ✅ |
 | `012A0823` | Panel → Fans | Master supply, slave extract | Speed 2 | Setting change | ✅ |
 | `012B002A` | Panel → Fans | Master supply, slave extract | Speed 3 | Stable | ✅ |
 | `012B0822` | Panel → Fans | Master supply, slave extract | Speed 3 | Setting change | ✅ |
+| `01320033` | Panel → Fans | Generic Mode Active | ✅ |
+| `0132083B` | Panel → Fans | Generic Mode Transition | ✅ |
+| `01330436` | Return transition from timed extract | 🟡 |
 | `01350034` | Panel → Fans | Extract | Speed 1 | Stable | ✅ |
 | `0135083C` | Panel → Fans | Extract | Speed 1 | Setting change | ✅ |
 | `01360037` | Panel → Fans | Extract | Speed 2 | Stable | ✅ |
