@@ -109,6 +109,56 @@ def build_discovery_payload(
         # Bedienung
         # -------------------------------------------------
 
+        "fan_control": {
+            "p": "fan",
+            "name": "Lüftungssteuerung",
+            "unique_id": _unique_id(
+                config,
+                "fan_control",
+            ),
+            "command_topic": _topic(
+                config,
+                "override/set",
+            ),
+            "state_topic": _topic(
+                config,
+                "state/override",
+            ),
+            "payload_on": "ON",
+            "payload_off": "OFF",
+
+            "percentage_command_topic": _topic(
+                config,
+                "speed/set",
+            ),
+            "percentage_state_topic": _topic(
+                config,
+                "state/selected_speed",
+            ),
+            "speed_range_min": 1,
+            "speed_range_max": 3,
+
+            "preset_mode_command_topic": _topic(
+                config,
+                "mode/set",
+            ),
+            "preset_mode_state_topic": _topic(
+                config,
+                "state/selected_mode",
+            ),
+            "preset_modes": [
+                "manual_alternating",
+                "silent",
+                "extract",
+                "supply",
+                "master_extract_slave_supply",
+                "master_supply_slave_extract",
+            ],
+            "icon": "mdi:hvac",
+        },
+
+
+
         "override": {
             "p": "switch",
             "name": "Override",
