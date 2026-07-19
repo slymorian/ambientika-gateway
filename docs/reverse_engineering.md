@@ -174,8 +174,8 @@ With humidity threshold set to one drop, stable byte-2 values are:
 
 | Mode | Speed 1 | Speed 2 | Speed 3 |
 |------|--------:|--------:|--------:|
-| Master extract, slave supply | `25` | `26` | `27` |
-| Master supply, slave extract | `29` | `2A` | `2B` |
+| Master supply, slave extract | `25` | `26` | `27` |
+| Master extract, slave supply | `29` | `2A` | `2B` |
 | Extract | `35` | `36` | `37` |
 | Supply | `39` | `3A` | `3B` |
 
@@ -448,14 +448,13 @@ Correction:
 
 ## Next experiments
 
-1. Map Silent mode completely.
-2. Map timed extract mode.
-3. Map Monitoring for all three humidity thresholds.
-4. Record Automatic normal operation below the humidity threshold.
-5. Identify manual speed-3 direction phase B.
-6. Decode the short fan response payloads.
-7. Verify byte-2 humidity bits using fixed modes at thresholds 2 and 3.
-8. Determine whether transition frames must be sent by the gateway or are optional.
+
+1. Map Monitoring for all three humidity thresholds.
+2. Record Automatic normal operation below the humidity threshold.
+3. Identify manual speed-3 direction phase B.
+4. Decode the short fan response payloads.
+5. Verify byte-2 humidity bits using fixed modes at thresholds 2 and 3.
+6. Determine whether transition frames must be sent by the gateway or are optional.
 
 ---
 

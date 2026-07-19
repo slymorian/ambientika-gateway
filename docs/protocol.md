@@ -50,12 +50,12 @@ Humidity threshold set to **1 drop**
 | Extract | 1 | `0135083C` | `01350034` | ✅ |
 | Extract | 2 | `0136083F` | `01360037` | ✅ |
 | Extract | 3 | `0137083E` | `01370036` | ✅ |
-| Master → Supply / Slave → Extract | 1 | `01290820` | `01290028` | ✅ |
-| Master → Supply / Slave → Extract | 2 | `012A0823` | `012A002B` | ✅ |
-| Master → Supply / Slave → Extract | 3 | `012B0822` | `012B002A` | ✅ |
-| Master → Extract / Slave → Supply | 1 | `0125082C` | `01250024` | ✅ |
-| Master → Extract / Slave → Supply | 2 | `0126082F` | `01260027` | ✅ |
-| Master → Extract / Slave → Supply | 3 | `0127082E` | `01270026` | ✅ |
+| Master → Extract / Slave → Supply | 1 | `01290820` | `01290028` | ✅ |
+| Master → Extract / Slave → Supply | 2 | `012A0823` | `012A002B` | ✅ |
+| Master → Extract / Slave → Supply | 3 | `012B0822` | `012B002A` | ✅ |
+| Master → Supply / Slave → Extract | 1 | `0125082C` | `01250024` | ✅ |
+| Master → Supply / Slave → Extract | 2 | `0126082F` | `01260027` | ✅ |
+| Master → Supply / Slave → Extract | 3 | `0127082E` | `01270026` | ✅ |
 
 ---
 
@@ -173,13 +173,12 @@ Current understanding:
 
 # Open questions
 
-- ⬜ Silent mode
-- ⬜ Timed extract mode
 - ⬜ Monitoring mode
 - ⬜ Automatic mode (normal operation)
 - ⬜ Automatic mode (direction changes)
 - ⬜ Meaning of all Byte-2 bit fields
 - ⬜ Complete state machine
+
 
 ---
 
@@ -191,8 +190,8 @@ Current understanding:
 | Automatic mode (alarm) | ✅ Complete |
 | Automatic mode (normal) | 🟡 In progress |
 | Monitoring mode | ⬜ Not analysed |
-| Silent mode | ⬜ Not analysed |
-| Timed extract | ⬜ Not analysed |
+| Silent mode | ✅ Complete |
+| Timed extract | ✅ Mostly understood |
 | Byte 3 | ✅ Mostly understood |
 | Byte 2 | 🟡 Partially understood |
 | Checksum | ✅ Fully understood |
