@@ -32,6 +32,7 @@ class Mode(str, Enum):
 
     UNKNOWN = "unknown"
 
+
 @dataclass(frozen=True)
 class ModeInfo:
     mqtt_value: str
@@ -40,6 +41,7 @@ class ModeInfo:
     supports_speed: bool = False
     supports_humidity_level: bool = False
     alternating: bool = False
+
 
 MODE_INFO: dict[Mode, ModeInfo] = {
     Mode.AUTOMATIC: ModeInfo(
@@ -129,24 +131,6 @@ def mode_from_mqtt(value: str) -> Mode:
     )
 
 
-
-def mode_label_de(mode: Mode) -> str:
-    return MODE_INFO[mode].label_de
-
-
-def mode_icon(mode: Mode) -> str:
-    return MODE_INFO[mode].icon
-    for mode, info in MODE_INFO.items():
-        if info.mqtt_value == normalized:
-            return mode
-
-    supported = ", ".join(mqtt_mode_values())
-
-    raise ValueError(
-        f"Unknown Ambientika mode {value!r}; supported: {supported}"
-    )
-
-
 def mode_label_de(mode: Mode) -> str:
     info = MODE_INFO.get(mode)
 
@@ -155,21 +139,22 @@ def mode_label_de(mode: Mode) -> str:
 
     return info.label_de
 
+
+def mode_icon(mode: Mode) -> str:
+    info = MODE_INFO.get(mode)
+
+    if info is None:
+        return "mdi:help-circle-outline"
+
+    return info.icon
+
+
 class Phase(str, Enum):
     PHASE_A = "phase_a"
     PHASE_B = "phase_b"
     TRANSITION = "transition"
     FIXED = "fixed"
     UNKNOWN = "unknown"
-
-@dataclass(frozen=True)
-class ModeInfo:
-    mqtt_value: str
-    label_de: str
-    icon: str
-    supports_speed: bool = False
-    supports_humidity_level: bool = False
-    alternating: bool = False
 
 
 @dataclass(frozen=True)
@@ -314,11 +299,11 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         checksum_valid=True,
     ),
 
-    # Master Abluft, Slave Zuluft
+    # Master Zuluft, Slave Abluft
     "01690068": DecodedFrame(
         raw="01690068",
         category=FrameCategory.CONTROL,
-        mode=Mode.MASTER_EXTRACT_SLAVE_SUPPLY,
+        mode=Mode.MASTER_SUPPLY_SLAVE_EXTRACT,
         speed=1,
         phase=Phase.FIXED,
         checksum_valid=True,
@@ -326,7 +311,7 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
     "016A006B": DecodedFrame(
         raw="016A006B",
         category=FrameCategory.CONTROL,
-        mode=Mode.MASTER_EXTRACT_SLAVE_SUPPLY,
+        mode=Mode.MASTER_SUPPLY_SLAVE_EXTRACT,
         speed=2,
         phase=Phase.FIXED,
         checksum_valid=True,
@@ -334,17 +319,17 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
     "016B006A": DecodedFrame(
         raw="016B006A",
         category=FrameCategory.CONTROL,
-        mode=Mode.MASTER_EXTRACT_SLAVE_SUPPLY,
+        mode=Mode.MASTER_SUPPLY_SLAVE_EXTRACT,
         speed=3,
         phase=Phase.FIXED,
         checksum_valid=True,
     ),
 
-    # Master Zuluft, Slave Abluft
+    # Master Abluft, Slave Zuluft
     "01650064": DecodedFrame(
         raw="01650064",
         category=FrameCategory.CONTROL,
-        mode=Mode.MASTER_SUPPLY_SLAVE_EXTRACT,
+        mode=Mode.MASTER_EXTRACT_SLAVE_SUPPLY,
         speed=1,
         phase=Phase.FIXED,
         checksum_valid=True,
@@ -352,7 +337,7 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
     "01660067": DecodedFrame(
         raw="01660067",
         category=FrameCategory.CONTROL,
-        mode=Mode.MASTER_SUPPLY_SLAVE_EXTRACT,
+        mode=Mode.MASTER_EXTRACT_SLAVE_SUPPLY,
         speed=2,
         phase=Phase.FIXED,
         checksum_valid=True,
@@ -360,31 +345,31 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
     "01670066": DecodedFrame(
         raw="01670066",
         category=FrameCategory.CONTROL,
-        mode=Mode.MASTER_SUPPLY_SLAVE_EXTRACT,
+        mode=Mode.MASTER_EXTRACT_SLAVE_SUPPLY,
         speed=3,
         phase=Phase.FIXED,
         checksum_valid=True,
     ),
 
     # Silent
-    "01A400A5": DecodedFrame(
-        raw="01A400A5",
+    "01280029": DecodedFrame(
+        raw="01280029",
         category=FrameCategory.CONTROL,
         mode=Mode.SILENT,
         speed=1,
         phase=Phase.PHASE_A,
         checksum_valid=True,
     ),
-    "01A000A1": DecodedFrame(
-        raw="01A000A1",
+    "01200021": DecodedFrame(
+        raw="01200021",
         category=FrameCategory.CONTROL,
         mode=Mode.SILENT,
         speed=1,
         phase=Phase.TRANSITION,
         checksum_valid=True,
     ),
-    "01A800A9": DecodedFrame(
-        raw="01A800A9",
+    "01240025": DecodedFrame(
+        raw="01240025",
         category=FrameCategory.CONTROL,
         mode=Mode.SILENT,
         speed=1,
@@ -437,13 +422,13 @@ FIXED_COMMAND_FRAMES: dict[tuple[Mode, int], str] = {
     (Mode.SUPPLY, 2): "017A007B",
     (Mode.SUPPLY, 3): "017B007A",
 
-    (Mode.MASTER_EXTRACT_SLAVE_SUPPLY, 1): "01690068",
-    (Mode.MASTER_EXTRACT_SLAVE_SUPPLY, 2): "016A006B",
-    (Mode.MASTER_EXTRACT_SLAVE_SUPPLY, 3): "016B006A",
+    (Mode.MASTER_EXTRACT_SLAVE_SUPPLY, 1): "01650064",
+    (Mode.MASTER_EXTRACT_SLAVE_SUPPLY, 2): "01660067",
+    (Mode.MASTER_EXTRACT_SLAVE_SUPPLY, 3): "01670066",
 
-    (Mode.MASTER_SUPPLY_SLAVE_EXTRACT, 1): "01650064",
-    (Mode.MASTER_SUPPLY_SLAVE_EXTRACT, 2): "01660067",
-    (Mode.MASTER_SUPPLY_SLAVE_EXTRACT, 3): "01670066",
+    (Mode.MASTER_SUPPLY_SLAVE_EXTRACT, 1): "01690068",
+    (Mode.MASTER_SUPPLY_SLAVE_EXTRACT, 2): "016A006B",
+    (Mode.MASTER_SUPPLY_SLAVE_EXTRACT, 3): "016B006A",
 }
 
 
@@ -462,6 +447,12 @@ ALTERNATING_SEQUENCES: dict[
         SequenceStep("01A200A3", 10.0, Phase.TRANSITION),
         SequenceStep("01A600A7", 60.0, Phase.PHASE_B),
         SequenceStep("01A200A3", 10.0, Phase.TRANSITION),
+    ),
+    (Mode.SILENT, 1): (
+        SequenceStep("01280029", 60.0, Phase.PHASE_A),
+        SequenceStep("01200021", 10.0, Phase.TRANSITION),
+        SequenceStep("01240025", 60.0, Phase.PHASE_B),
+        SequenceStep("01200021", 10.0, Phase.TRANSITION),
     ),
 }
 
