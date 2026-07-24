@@ -167,6 +167,10 @@ class DecodedFrame:
     phase: Phase = Phase.UNKNOWN
     checksum_valid: bool = False
     description: str = ""
+    button_press: bool = False
+    filter_reset: bool = False
+    filter_alarm: bool | None = None
+    status_byte: int | None = None
 
 
 @dataclass(frozen=True)
@@ -351,6 +355,84 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         checksum_valid=True,
     ),
 
+    # Überwachungsmodus / Feuchteschwelle
+    #
+    # Die Varianten mit Byte 3 = 0x0C sind die beim Tastendruck
+    # beobachteten Übergangsframes. Die stabilen Sollzustände verwenden 0x04.
+    "01360C3B": DecodedFrame(
+        raw="01360C3B",
+        category=FrameCategory.CONTROL,
+        mode=Mode.MONITORING,
+        humidity_level=1,
+        checksum_valid=True,
+        description="Überwachung, Feuchteschwelle 1 (Tastendruck)",
+        button_press=True,
+    ),
+    "01360433": DecodedFrame(
+        raw="01360433",
+        category=FrameCategory.CONTROL,
+        mode=Mode.MONITORING,
+        humidity_level=1,
+        checksum_valid=True,
+        description="Überwachung, Feuchteschwelle 1",
+    ),
+    "01760C7B": DecodedFrame(
+        raw="01760C7B",
+        category=FrameCategory.CONTROL,
+        mode=Mode.MONITORING,
+        humidity_level=2,
+        checksum_valid=True,
+        description="Überwachung, Feuchteschwelle 2 (Tastendruck)",
+        button_press=True,
+    ),
+    "01760473": DecodedFrame(
+        raw="01760473",
+        category=FrameCategory.CONTROL,
+        mode=Mode.MONITORING,
+        humidity_level=2,
+        checksum_valid=True,
+        description="Überwachung, Feuchteschwelle 2",
+    ),
+    "01B60CBB": DecodedFrame(
+        raw="01B60CBB",
+        category=FrameCategory.CONTROL,
+        mode=Mode.MONITORING,
+        humidity_level=3,
+        checksum_valid=True,
+        description="Überwachung, Feuchteschwelle 3 (Tastendruck)",
+        button_press=True,
+    ),
+    "01B604B3": DecodedFrame(
+        raw="01B604B3",
+        category=FrameCategory.CONTROL,
+        mode=Mode.MONITORING,
+        humidity_level=3,
+        checksum_valid=True,
+        description="Überwachung, Feuchteschwelle 3",
+    ),
+
+    # Filter-Reset im Überwachungsmodus, beobachtet bei Schwelle 1.
+    # 0x0D = Reset-Bit + Tastendruckbit, 0x05 = Reset-Bit ohne Tastendruckbit.
+    "01360D3A": DecodedFrame(
+        raw="01360D3A",
+        category=FrameCategory.CONTROL,
+        mode=Mode.MONITORING,
+        humidity_level=1,
+        checksum_valid=True,
+        description="Filter-Reset (Tastendruck)",
+        button_press=True,
+        filter_reset=True,
+    ),
+    "01360532": DecodedFrame(
+        raw="01360532",
+        category=FrameCategory.CONTROL,
+        mode=Mode.MONITORING,
+        humidity_level=1,
+        checksum_valid=True,
+        description="Filter-Reset",
+        filter_reset=True,
+    ),
+
     # Silent
     "01280029": DecodedFrame(
         raw="01280029",
@@ -383,32 +465,50 @@ SHORT_FRAMES: dict[tuple[str, str], DecodedFrame] = {
     ("panel", "020002"): DecodedFrame(
         raw="020002",
         category=FrameCategory.REQUEST,
-        description="Statusabfrage des Wandpanels",
+        description="Kurze Statusabfrage des Wandpanels",
     ),
     ("panel", "020406"): DecodedFrame(
         raw="020406",
         category=FrameCategory.REQUEST,
         description="Erweiterte Statusabfrage des Wandpanels",
     ),
+    ("panel", "020507"): DecodedFrame(
+        raw="020507",
+        category=FrameCategory.REQUEST,
+        description="Erweiterte Statusabfrage mit Filter-Reset-Bit",
+        filter_reset=True,
+    ),
     ("fans", "000202"): DecodedFrame(
         raw="000202",
         category=FrameCategory.REPLY,
-        description="Statusantwort des Masters",
+        description="Kurze Statusantwort des Masters",
+        status_byte=0x02,
+    ),
+    ("fans", "000808"): DecodedFrame(
+        raw="000808",
+        category=FrameCategory.REPLY,
+        description="Erweiterte Statusantwort des Masters",
+        filter_alarm=False,
+        status_byte=0x08,
     ),
     ("fans", "000A0A"): DecodedFrame(
         raw="000A0A",
         category=FrameCategory.REPLY,
-        description="Erweiterte Statusantwort des Masters",
+        description="Erweiterte Statusantwort des Masters; Filteralarm aktiv",
+        filter_alarm=True,
+        status_byte=0x0A,
     ),
     ("fans", "000000"): DecodedFrame(
         raw="000000",
         category=FrameCategory.STARTUP,
         description="Start-/Initialisierungstelegramm",
+        status_byte=0x00,
     ),
     ("fans", "000101"): DecodedFrame(
         raw="000101",
         category=FrameCategory.STARTUP,
         description="Start-/Initialisierungstelegramm",
+        status_byte=0x01,
     ),
 }
 
@@ -521,6 +621,68 @@ def decode_frame(source: str, payload: str) -> DecodedFrame:
         checksum_valid=False,
         description="Unknown or malformed frame",
     )
+
+
+def filter_alarm_from_reply(payload: str) -> bool | None:
+    """Return the decoded filter-alarm state for a known master reply.
+
+    The result is ``None`` for frames for which the filter bit has not yet
+    been verified. Currently the comparison 0x0A -> 0x08 after a physical
+    filter reset proves bit 0x02 for the extended master status reply.
+    """
+    normalized = normalize_payload(payload)
+
+    if normalized == "000A0A":
+        return True
+
+    if normalized == "000808":
+        return False
+
+    return None
+
+
+def monitoring_command_frame(humidity_level: int) -> str:
+    """Return the stable monitoring command for humidity level 1..3."""
+    frames = {
+        1: "01360433",
+        2: "01760473",
+        3: "01B604B3",
+    }
+
+    try:
+        return frames[humidity_level]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported monitoring humidity level: {humidity_level}"
+        ) from exc
+
+
+def monitoring_button_frame(humidity_level: int) -> str:
+    """Return the observed button/transition frame for level 1..3."""
+    frames = {
+        1: "01360C3B",
+        2: "01760C7B",
+        3: "01B60CBB",
+    }
+
+    try:
+        return frames[humidity_level]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported monitoring humidity level: {humidity_level}"
+        ) from exc
+
+
+def filter_reset_frames() -> tuple[str, str, str]:
+    """Return the observed filter-reset sequence for monitoring level 1.
+
+    Sequence:
+      1. control frame with reset + button bit
+      2. control frame with reset bit
+      3. one extended status request with reset bit
+    The panel then returned to the ordinary stable command/status request.
+    """
+    return ("01360D3A", "01360532", "020507")
 
 
 def fixed_command_frame(mode: Mode, speed: int) -> str:

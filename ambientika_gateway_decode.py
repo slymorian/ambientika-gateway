@@ -1,14 +1,47 @@
 #!/usr/bin/env python3
 
+"""Transparentes Ambientika-RS485-Decoder-Gateway.
+
+Dateiposition auf dem Raspberry:
+    /home/stefan/ambientika/ambientika_gateway_decoder.py
+
+Die Protokolldefinition wird aus dem src-Layout geladen:
+    /home/stefan/ambientika/src/ambientika_gateway/protocol.py
+"""
+
+from __future__ import annotations
+
 import csv
 import signal
 import sys
 import threading
 import time
-from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import serial
+
+# Das Skript liegt im Projektstamm, das Python-Paket unter ./src.
+PROJECT_ROOT = Path(__file__).resolve().parent
+SRC_DIRECTORY = PROJECT_ROOT / "src"
+
+if str(SRC_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(SRC_DIRECTORY))
+
+try:
+    from ambientika_gateway.protocol import (
+        DecodedFrame,
+        FrameCategory,
+        Mode,
+        Phase,
+        decode_frame,
+        is_valid_control_frame,
+    )
+except ImportError as exc:
+    raise SystemExit(
+        "ambientika_gateway.protocol konnte nicht geladen werden. "
+        f"Erwarteter Pfad: {SRC_DIRECTORY / 'ambientika_gateway' / 'protocol.py'}"
+    ) from exc
 
 
 PANEL_PORT = "/dev/ambientika-panel"
@@ -18,7 +51,7 @@ BAUDRATE = 9600
 READ_TIMEOUT = 0.02
 READ_SIZE = 256
 
-LOG_DIRECTORY = Path.home() / "ambientika" / "logs"
+LOG_DIRECTORY = PROJECT_ROOT / "logs"
 LOG_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
 LOG_FILE = LOG_DIRECTORY / time.strftime(
@@ -32,165 +65,46 @@ fans_write_lock = threading.Lock()
 csv_lock = threading.Lock()
 
 
-@dataclass(frozen=True)
-class DecodedState:
-    category: str
-    mode: str = ""
-    speed: int | None = None
-    phase: str = ""
-    description: str = ""
+def source_for_protocol(source: str) -> str:
+    """Wandelt die lokalen Quellnamen in die protocol.py-Namen um."""
+    return source.strip().lower()
 
 
-# Zunächst nur Zustände, die wir hinreichend sicher zugeordnet haben.
-#
-# phase_a und phase_b sind die beiden festen Gegenrichtungen.
-# Welche davon physisch "Master Abluft" ist, bestimmen wir später.
-PANEL_CONTROL_FRAMES: dict[str, DecodedState] = {
-    # Manuell alternierend, Stufe 1
-    "01A500A4": DecodedState(
-        "control", "manual_alternating", 1, "phase_a"
-    ),
-    "01A100A0": DecodedState(
-        "control", "manual_alternating", 1, "transition"
-    ),
-    "01A900A8": DecodedState(
-        "control", "manual_alternating", 1, "phase_b"
-    ),
+def enum_value(value: object) -> str:
+    """Gibt für Enums deren Wert und sonst einen lesbaren String zurück."""
+    enum_member_value = getattr(value, "value", None)
 
-    # Manuell alternierend, Stufe 2
-    "01AA00AB": DecodedState(
-        "control", "manual_alternating", 2, "phase_a"
-    ),
-    "01A200A3": DecodedState(
-        "control", "manual_alternating", 2, "transition"
-    ),
-    "01A600A7": DecodedState(
-        "control", "manual_alternating", 2, "phase_b"
-    ),
+    if isinstance(enum_member_value, str):
+        return enum_member_value
 
-    # Manuell alternierend, Stufe 3 – bislang nur zwei sicher erfasste Codes
-    "01A700A6": DecodedState(
-        "control", "manual_alternating", 3, "phase_a"
-    ),
-    "01A300A2": DecodedState(
-        "control", "manual_alternating", 3, "transition"
-    ),
-
-    # Beide Lüfter dauerhaft Abluft
-    "01750074": DecodedState("control", "extract", 1, "fixed"),
-    "01760077": DecodedState("control", "extract", 2, "fixed"),
-    "01770076": DecodedState("control", "extract", 3, "fixed"),
-
-    # Beide Lüfter dauerhaft Zuluft
-    "01790078": DecodedState("control", "supply", 1, "fixed"),
-    "017A007B": DecodedState("control", "supply", 2, "fixed"),
-    "017B007A": DecodedState("control", "supply", 3, "fixed"),
-
-    # Master Abluft, Slave Zuluft
-    "01690068": DecodedState(
-        "control", "master_extract_slave_supply", 1, "fixed"
-    ),
-    "016A006B": DecodedState(
-        "control", "master_extract_slave_supply", 2, "fixed"
-    ),
-    "016B006A": DecodedState(
-        "control", "master_extract_slave_supply", 3, "fixed"
-    ),
-
-    # Master Zuluft, Slave Abluft
-    "01650064": DecodedState(
-        "control", "master_supply_slave_extract", 1, "fixed"
-    ),
-    "01660067": DecodedState(
-        "control", "master_supply_slave_extract", 2, "fixed"
-    ),
-    "01670066": DecodedState(
-        "control", "master_supply_slave_extract", 3, "fixed"
-    ),
-
-    # Silent – vorläufig bekannte Phasen
-    "01A400A5": DecodedState(
-        "control", "silent", 1, "phase_a"
-    ),
-    "01A000A1": DecodedState(
-        "control", "silent", 1, "transition"
-    ),
-    "01A800A9": DecodedState(
-        "control", "silent", 1, "phase_b"
-    ),
-}
+    return str(value)
 
 
-SHORT_FRAMES: dict[tuple[str, str], DecodedState] = {
-    ("PANEL", "020002"): DecodedState(
-        "request",
-        description="Statusabfrage des Wandpanels",
-    ),
-    ("PANEL", "020406"): DecodedState(
-        "request",
-        description="Erweiterte Statusabfrage des Wandpanels",
-    ),
-    ("FANS", "000202"): DecodedState(
-        "reply",
-        description="Statusantwort des Masters",
-    ),
-    ("FANS", "000A0A"): DecodedState(
-        "reply",
-        description="Erweiterte Statusantwort des Masters",
-    ),
-    ("FANS", "000000"): DecodedState(
-        "startup",
-        description="Start-/Initialisierungstelegramm",
-    ),
-    ("FANS", "000101"): DecodedState(
-        "startup",
-        description="Start-/Initialisierungstelegramm",
-    ),
-}
+def optional_bool_text(value: bool | None) -> str:
+    if value is True:
+        return "true"
+
+    if value is False:
+        return "false"
+
+    return ""
 
 
-def xor_valid(payload: str) -> bool:
-    """Prüft die XOR-Prüfsumme eines 4-Byte-Steuerframes."""
-
-    try:
-        data = bytes.fromhex(payload)
-    except ValueError:
-        return False
-
-    return (
-        len(data) == 4
-        and (data[0] ^ data[1] ^ data[2]) == data[3]
-    )
-
-
-def decode_frame(source: str, payload: str) -> DecodedState:
-    """Ordnet einen Frame einem bislang bekannten Zustand zu."""
-
-    payload = payload.upper()
-
-    short_state = SHORT_FRAMES.get((source, payload))
-    if short_state is not None:
-        return short_state
-
-    if source == "PANEL" and payload in PANEL_CONTROL_FRAMES:
-        return PANEL_CONTROL_FRAMES[payload]
-
-    if len(payload) == 8 and xor_valid(payload):
-        return DecodedState(
-            category="unknown_control",
-            description="Gültiger, noch nicht zugeordneter Steuerframe",
-        )
-
-    return DecodedState(
-        category="unknown",
-        description="Noch nicht zugeordnet",
+def decode(source: str, payload: str) -> DecodedFrame:
+    return decode_frame(
+        source_for_protocol(source),
+        payload,
     )
 
 
 class FrameParser:
     """Extrahiert STX/ETX-gerahmte ASCII-Telegramme."""
 
-    def __init__(self, source: str, on_frame):
+    def __init__(
+        self,
+        source: str,
+        on_frame: Callable[[str, str], None],
+    ) -> None:
         self.source = source
         self.on_frame = on_frame
         self.buffer = bytearray()
@@ -201,8 +115,9 @@ class FrameParser:
             if value == 0x02:  # STX
                 self.buffer = bytearray()
                 self.in_frame = True
+                continue
 
-            elif value == 0x03 and self.in_frame:  # ETX
+            if value == 0x03 and self.in_frame:  # ETX
                 payload = self.buffer.decode(
                     "ascii",
                     errors="replace",
@@ -212,27 +127,37 @@ class FrameParser:
 
                 self.buffer = bytearray()
                 self.in_frame = False
+                continue
 
-            elif self.in_frame:
+            if self.in_frame:
                 self.buffer.append(value)
+
+                # Schutz vor beschädigten oder nie abgeschlossenen Frames.
+                if len(self.buffer) > 128:
+                    self.buffer = bytearray()
+                    self.in_frame = False
 
 
 class StateTracker:
     """Unterdrückt in der Konsole ständig wiederholte Steuerframes."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.last_control_payload: str | None = None
 
     def should_print(
         self,
         source: str,
         payload: str,
-        state: DecodedState,
+        state: DecodedFrame,
     ) -> bool:
-        if source == "PANEL" and state.category in {
-            "control",
-            "unknown_control",
-        }:
+        if (
+            source == "PANEL"
+            and state.category
+            in {
+                FrameCategory.CONTROL,
+                FrameCategory.UNKNOWN_CONTROL,
+            }
+        ):
             if payload == self.last_control_payload:
                 return False
 
@@ -249,7 +174,7 @@ state_tracker = StateTracker()
 def write_csv(
     source: str,
     payload: str,
-    state: DecodedState,
+    state: DecodedFrame,
 ) -> None:
     now = time.time()
     timestamp = time.strftime(
@@ -271,22 +196,77 @@ def write_csv(
                     f"{milliseconds:03d}",
                     source,
                     payload,
-                    state.category,
-                    state.mode,
+                    enum_value(state.category),
+                    (
+                        ""
+                        if state.mode is Mode.UNKNOWN
+                        else enum_value(state.mode)
+                    ),
                     (
                         state.speed
                         if state.speed is not None
                         else ""
                     ),
-                    state.phase,
+                    (
+                        state.humidity_level
+                        if state.humidity_level is not None
+                        else ""
+                    ),
+                    (
+                        ""
+                        if state.phase is Phase.UNKNOWN
+                        else enum_value(state.phase)
+                    ),
                     state.description,
-                    xor_valid(payload),
+                    optional_bool_text(state.button_press),
+                    optional_bool_text(state.filter_reset),
+                    optional_bool_text(state.filter_alarm),
+                    (
+                        f"0x{state.status_byte:02X}"
+                        if state.status_byte is not None
+                        else ""
+                    ),
+                    state.checksum_valid,
                 ]
             )
 
 
+def state_details(state: DecodedFrame) -> list[str]:
+    details: list[str] = []
+
+    if state.mode is not Mode.UNKNOWN:
+        details.append(f"mode={enum_value(state.mode)}")
+
+    if state.speed is not None:
+        details.append(f"speed={state.speed}")
+
+    if state.humidity_level is not None:
+        details.append(
+            f"humidity_level={state.humidity_level}"
+        )
+
+    if state.phase is not Phase.UNKNOWN:
+        details.append(f"phase={enum_value(state.phase)}")
+
+    if state.button_press:
+        details.append("button_press=true")
+
+    if state.filter_reset:
+        details.append("filter_reset=true")
+
+    if state.filter_alarm is True:
+        details.append("filter_alarm=true")
+    elif state.filter_alarm is False:
+        details.append("filter_alarm=false")
+
+    if state.status_byte is not None:
+        details.append(f"status_byte=0x{state.status_byte:02X}")
+
+    return details
+
+
 def handle_frame(source: str, payload: str) -> None:
-    state = decode_frame(source, payload)
+    state = decode(source, payload)
     write_csv(source, payload, state)
 
     if not state_tracker.should_print(
@@ -297,29 +277,45 @@ def handle_frame(source: str, payload: str) -> None:
         return
 
     timestamp = time.strftime("%H:%M:%S")
+    details = state_details(state)
 
-    if state.category == "control":
+    if state.category is FrameCategory.CONTROL:
+        detail_text = "  ".join(details)
+
+        if state.description:
+            detail_text = (
+                f"{detail_text}  {state.description}"
+                if detail_text
+                else state.description
+            )
+
         print(
             f"{timestamp}  {source:<5}  {payload}  "
-            f"mode={state.mode}  "
-            f"speed={state.speed}  "
-            f"phase={state.phase}",
+            f"{detail_text}",
             flush=True,
         )
+        return
 
-    elif state.category == "unknown_control":
+    if state.category is FrameCategory.UNKNOWN_CONTROL:
         print(
             f"{timestamp}  {source:<5}  {payload}  "
-            f"gültiger, noch unbekannter Steuerframe",
+            "gültiger, noch unbekannter Steuerframe",
             flush=True,
         )
+        return
 
-    else:
-        print(
-            f"{timestamp}  {source:<5}  {payload}  "
-            f"{state.category}: {state.description}",
-            flush=True,
-        )
+    description = state.description or "Noch nicht zugeordnet"
+    detail_text = ""
+
+    if details:
+        detail_text = " [" + ", ".join(details) + "]"
+
+    print(
+        f"{timestamp}  {source:<5}  {payload}  "
+        f"{enum_value(state.category)}: "
+        f"{description}{detail_text}",
+        flush=True,
+    )
 
 
 def forward(
@@ -337,7 +333,7 @@ def forward(
             if not data:
                 continue
 
-            # Zuerst analysieren, dann unverändert weiterreichen.
+            # Erst analysieren und anschließend unverändert weiterreichen.
             parser.feed(data)
 
             with destination_lock:
@@ -361,7 +357,11 @@ def forward(
             stop_event.set()
 
 
-def request_stop(signum=None, frame=None) -> None:
+def request_stop(
+    signum: int | None = None,
+    frame: object | None = None,
+) -> None:
+    del signum, frame
     stop_event.set()
 
 
@@ -381,11 +381,28 @@ def create_log_file() -> None:
                 "category",
                 "mode",
                 "speed",
+                "humidity_level",
                 "phase",
                 "description",
-                "xor_valid",
+                "button_press",
+                "filter_reset",
+                "filter_alarm",
+                "status_byte",
+                "checksum_valid",
             ]
         )
+
+
+def open_serial_port(path: str) -> serial.Serial:
+    return serial.Serial(
+        port=path,
+        baudrate=BAUDRATE,
+        bytesize=serial.EIGHTBITS,
+        parity=serial.PARITY_NONE,
+        stopbits=serial.STOPBITS_ONE,
+        timeout=READ_TIMEOUT,
+        write_timeout=1,
+    )
 
 
 def main() -> int:
@@ -395,33 +412,25 @@ def main() -> int:
     create_log_file()
 
     print("Öffne Ambientika-Busse …")
-    print(f"  Panel:   {PANEL_PORT}")
-    print(f"  Lüfter:  {FANS_PORT}")
-    print(f"  Log:     {LOG_FILE}")
+    print(f"  Panel:      {PANEL_PORT}")
+    print(f"  Lüfter:     {FANS_PORT}")
+    print(f"  Protokoll:  {SRC_DIRECTORY / 'ambientika_gateway' / 'protocol.py'}")
+    print(f"  Log:        {LOG_FILE}")
     print()
 
+    panel: serial.Serial | None = None
+    fans: serial.Serial | None = None
+
     try:
-        panel = serial.Serial(
-            port=PANEL_PORT,
-            baudrate=BAUDRATE,
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
-            timeout=READ_TIMEOUT,
-            write_timeout=1,
-        )
-
-        fans = serial.Serial(
-            port=FANS_PORT,
-            baudrate=BAUDRATE,
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
-            timeout=READ_TIMEOUT,
-            write_timeout=1,
-        )
-
+        panel = open_serial_port(PANEL_PORT)
+        fans = open_serial_port(FANS_PORT)
     except serial.SerialException as exc:
+        if panel is not None and panel.is_open:
+            panel.close()
+
+        if fans is not None and fans.is_open:
+            fans.close()
+
         print(
             f"Ports konnten nicht geöffnet werden: {exc}",
             file=sys.stderr,
@@ -483,4 +492,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
