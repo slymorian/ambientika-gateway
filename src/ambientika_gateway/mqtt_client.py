@@ -252,20 +252,39 @@ class AmbientikaMqttClient:
             "state/control_source",
             active.source,
         )
+        self.publish(
+            "state/control_policy",
+            override.policy.value,
+        )
 
         self.publish(
             "state/override",
             override.enabled,
         )
-        self.publish("state/desired_mode", desired.mode.value)
-        self.publish("state/desired_speed", desired.speed)
-        self.publish("state/desired_humidity_level", desired.humidity_level)
-        self.publish("state/desired_generation", desired.generation)
-
-        # Backward-compatible aliases used by existing Home Assistant entities.
-        self.publish("state/selected_mode", desired.mode.value)
-        self.publish("state/selected_speed", desired.speed)
-        self.publish("state/selected_humidity_level", desired.humidity_level)
+        self.publish(
+            "state/selected_mode",
+            desired.desired_mode.value,
+        )
+        self.publish(
+            "state/selected_speed",
+            desired.desired_speed,
+        )
+        self.publish(
+            "state/selected_humidity",
+            desired.desired_humidity,
+        )
+        self.publish(
+            "state/desired_mode",
+            desired.desired_mode.value,
+        )
+        self.publish(
+            "state/desired_speed",
+            desired.desired_speed,
+        )
+        self.publish(
+            "state/desired_humidity",
+            desired.desired_humidity,
+        )
         self.publish(
             "state/override_phase",
             override.phase.value,
@@ -299,10 +318,14 @@ class AmbientikaMqttClient:
             "state/panel_phase",
             panel.phase.value,
         )
-        self.publish("state/panel_humidity_level", panel.humidity_level or "")
-        self.publish("state/operating_state", panel.operating_state.value)
-        self.publish("state/humidity_alarm", panel.humidity_alarm if panel.humidity_alarm is not None else "")
-        self.publish("state/pending_extract", panel.pending_extract)
+        self.publish(
+            "state/panel_humidity",
+            panel.humidity if panel.humidity is not None else "",
+        )
+        self.publish(
+            "state/panel_operating_state",
+            panel.operating_state.value,
+        )
 
         self.publish(
             "state/active_frame",
@@ -324,6 +347,26 @@ class AmbientikaMqttClient:
             "state/active_phase",
             active.phase.value,
         )
+        self.publish(
+            "state/operating_state",
+            active.operating_state.value,
+        )
+        self.publish(
+            "state/phase",
+            active.phase.value,
+        )
+        self.publish(
+            "state/humidity_alarm",
+            (
+                active.humidity_alarm
+                if active.humidity_alarm is not None
+                else ""
+            ),
+        )
+        self.publish(
+            "state/active_humidity",
+            active.humidity if active.humidity is not None else "",
+        )
 
         self.publish(
             "state/fan_reply",
@@ -337,9 +380,22 @@ class AmbientikaMqttClient:
             "state/fan_reply_description",
             fan_reply.description,
         )
-        self.publish("state/fan_status_byte", f"0x{fan_reply.status_byte:02X}" if fan_reply.status_byte is not None else "")
-        if fan_reply.humidity_alarm is not None:
-            self.publish("state/humidity_alarm", fan_reply.humidity_alarm)
+        self.publish(
+            "state/fan_status_byte",
+            (
+                f"0x{fan_reply.status_byte:02X}"
+                if fan_reply.status_byte is not None
+                else ""
+            ),
+        )
+        self.publish(
+            "state/filter_alarm",
+            (
+                fan_reply.filter_alarm
+                if fan_reply.filter_alarm is not None
+                else ""
+            ),
+        )
 
         panel_age = self._state.panel_age_seconds()
         fan_reply_age = self._state.fan_reply_age_seconds()
@@ -386,30 +442,23 @@ class AmbientikaMqttClient:
             "state/panel_phase",
             panel.phase.value,
         )
-        self.publish("state/panel_humidity_level", panel.humidity_level or "")
-        self.publish("state/operating_state", panel.operating_state.value)
         self.publish(
-            "state/humidity_alarm",
-            panel.humidity_alarm if panel.humidity_alarm is not None else "",
+            "state/panel_humidity",
+            panel.humidity if panel.humidity is not None else "",
         )
-        self.publish("state/pending_extract", panel.pending_extract)
+        self.publish(
+            "state/panel_operating_state",
+            panel.operating_state.value,
+        )
 
     def publish_override_state(self) -> None:
         snapshot = self._state.snapshot()
-        desired = snapshot.desired
         override = snapshot.override
 
         self.publish(
             "state/override",
             override.enabled,
         )
-        self.publish("state/desired_mode", desired.mode.value)
-        self.publish("state/desired_speed", desired.speed)
-        self.publish("state/desired_humidity_level", desired.humidity_level)
-        self.publish("state/desired_generation", desired.generation)
-        self.publish("state/selected_mode", desired.mode.value)
-        self.publish("state/selected_speed", desired.speed)
-        self.publish("state/selected_humidity_level", desired.humidity_level)
         self.publish(
             "state/override_phase",
             override.phase.value,
@@ -422,6 +471,19 @@ class AmbientikaMqttClient:
             "state/override_generation",
             override.generation,
         )
+        self.publish(
+            "state/control_policy",
+            override.policy.value,
+        )
+
+    def publish_desired_state(self) -> None:
+        desired = self._state.snapshot().desired
+        self.publish("state/selected_mode", desired.desired_mode.value)
+        self.publish("state/selected_speed", desired.desired_speed)
+        self.publish("state/selected_humidity", desired.desired_humidity)
+        self.publish("state/desired_mode", desired.desired_mode.value)
+        self.publish("state/desired_speed", desired.desired_speed)
+        self.publish("state/desired_humidity", desired.desired_humidity)
 
     def publish_active_state(self) -> None:
         snapshot = self._state.snapshot()
@@ -451,6 +513,23 @@ class AmbientikaMqttClient:
             "state/active_phase",
             active.phase.value,
         )
+        self.publish(
+            "state/operating_state",
+            active.operating_state.value,
+        )
+        self.publish("state/phase", active.phase.value)
+        self.publish(
+            "state/humidity_alarm",
+            (
+                active.humidity_alarm
+                if active.humidity_alarm is not None
+                else ""
+            ),
+        )
+        self.publish(
+            "state/active_humidity",
+            active.humidity if active.humidity is not None else "",
+        )
 
     def publish_fan_reply_state(self) -> None:
         snapshot = self._state.snapshot()
@@ -468,9 +547,22 @@ class AmbientikaMqttClient:
             "state/fan_reply_description",
             reply.description,
         )
-        self.publish("state/fan_status_byte", f"0x{reply.status_byte:02X}" if reply.status_byte is not None else "")
-        if reply.humidity_alarm is not None:
-            self.publish("state/humidity_alarm", reply.humidity_alarm)
+        self.publish(
+            "state/fan_status_byte",
+            (
+                f"0x{reply.status_byte:02X}"
+                if reply.status_byte is not None
+                else ""
+            ),
+        )
+        self.publish(
+            "state/filter_alarm",
+            (
+                reply.filter_alarm
+                if reply.filter_alarm is not None
+                else ""
+            ),
+        )
 
     def publish_error(self, message: str) -> None:
         LOGGER.error("%s", message)
@@ -521,8 +613,14 @@ class AmbientikaMqttClient:
                     self.topic("mode/set"),
                     0,
                 ),
-                (self.topic("speed/set"), 0),
-                (self.topic("humidity_level/set"), 0),
+                (
+                    self.topic("speed/set"),
+                    0,
+                ),
+                (
+                    self.topic("humidity/set"),
+                    0,
+                ),
                 (
                     HOME_ASSISTANT_STATUS_TOPIC,
                     0,
@@ -602,7 +700,7 @@ class AmbientikaMqttClient:
             self._process_speed_command(payload)
             return
 
-        if message.topic == self.topic("humidity_level/set"):
+        if message.topic == self.topic("humidity/set"):
             self._process_humidity_command(payload)
             return
 
@@ -677,12 +775,12 @@ class AmbientikaMqttClient:
         if self._on_mode is not None:
             self._on_mode(mode)
         else:
-            self._state.configure_override(
+            self._state.configure_desired(
                 mode=mode,
             )
 
         self.clear_error()
-        self.publish_override_state()
+        self.publish_desired_state()
 
     def _process_speed_command(
         self,
@@ -707,28 +805,39 @@ class AmbientikaMqttClient:
         if self._on_speed is not None:
             self._on_speed(speed)
         else:
-            self._state.configure_override(
+            self._state.configure_desired(
                 speed=speed,
             )
 
         self.clear_error()
-        self.publish_override_state()
+        self.publish_desired_state()
 
-    def _process_humidity_command(self, payload: str) -> None:
+    def _process_humidity_command(
+        self,
+        payload: str,
+    ) -> None:
         try:
-            level = int(payload)
+            humidity = int(payload)
         except ValueError:
-            self.publish_error(f"Ungültige Feuchteschwelle: {payload!r}")
+            self.publish_error(
+                f"Ungültige Feuchteschwelle: {payload!r}"
+            )
             return
-        if level not in (1, 2, 3):
-            self.publish_error("Feuchteschwelle muss 1, 2 oder 3 sein")
+
+        if humidity not in (1, 2, 3):
+            self.publish_error(
+                "Feuchteschwelle muss 1, 2 oder 3 sein, "
+                f"erhalten: {humidity}"
+            )
             return
+
         if self._on_humidity is not None:
-            self._on_humidity(level)
+            self._on_humidity(humidity)
         else:
-            self._state.configure_override(humidity_level=level)
+            self._state.configure_desired(humidity=humidity)
+
         self.clear_error()
-        self.publish_override_state()
+        self.publish_desired_state()
 
     def __enter__(self) -> AmbientikaMqttClient:
         self.start()

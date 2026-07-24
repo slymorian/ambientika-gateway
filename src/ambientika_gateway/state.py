@@ -3,30 +3,34 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, replace
+from enum import Enum
 
 from .protocol import (
     DecodedFrame,
     FrameCategory,
     Mode,
-    Phase,
     OperatingState,
+    Phase,
 )
+
+
+class ControlPolicy(str, Enum):
+    """How the gateway arbitrates panel and software control."""
+
+    TRANSPARENT = "transparent"
+    OVERRIDE = "override"
+    ASSIST = "assist"
 
 
 @dataclass(frozen=True)
 class PanelState:
-    """
-    Zuletzt vom Wandpanel beobachteter Steuerzustand.
-    """
-
     raw_frame: str | None = None
     mode: Mode = Mode.UNKNOWN
     speed: int | None = None
-    phase: Phase = Phase.UNKNOWN
-    humidity_level: int | None = None
+    humidity: int | None = None
     operating_state: OperatingState = OperatingState.UNKNOWN
     humidity_alarm: bool | None = None
-    pending_extract: bool = False
+    phase: Phase = Phase.UNKNOWN
     last_seen_monotonic: float | None = None
 
     @property
@@ -36,28 +40,24 @@ class PanelState:
 
 @dataclass(frozen=True)
 class DesiredState:
-    """Logical target selected through MQTT/Home Assistant.
+    """Logical target selected through MQTT/Home Assistant."""
 
-    It is deliberately separate from the runtime override phase so the
-    future assist controller can compare panel, desired and active state.
-    """
-
-    mode: Mode = Mode.EXTRACT
-    speed: int = 3
-    humidity_level: int = 2
+    desired_mode: Mode = Mode.EXTRACT
+    desired_speed: int = 3
+    desired_humidity: int = 2
     generation: int = 0
 
 
 @dataclass(frozen=True)
 class OverrideState:
-    """
-    Von Home Assistant beziehungsweise MQTT gewünschter Zustand.
+    """Runtime state of software control.
+
+    The desired values live in :class:`DesiredState`; this object only
+    tracks arbitration and the frame currently emitted by the controller.
     """
 
     enabled: bool = False
-    mode: Mode = Mode.EXTRACT
-    speed: int = 3
-    humidity_level: int = 2
+    policy: ControlPolicy = ControlPolicy.TRANSPARENT
     phase: Phase = Phase.UNKNOWN
     raw_frame: str | None = None
     generation: int = 0
@@ -65,65 +65,66 @@ class OverrideState:
 
 @dataclass(frozen=True)
 class ActiveState:
-    """
-    Zustand, der aktuell tatsächlich an den Lüfterbus gesendet wird.
-
-    source:
-        panel    = Steuerung stammt vom Wandpanel
-        override = Steuerung stammt vom Gateway
-        unknown  = noch kein Zustand bekannt
-    """
-
     source: str = "unknown"
     raw_frame: str | None = None
     mode: Mode = Mode.UNKNOWN
     speed: int | None = None
-    phase: Phase = Phase.UNKNOWN
+    humidity: int | None = None
     operating_state: OperatingState = OperatingState.UNKNOWN
     humidity_alarm: bool | None = None
-    pending_extract: bool = False
+    phase: Phase = Phase.UNKNOWN
     last_sent_monotonic: float | None = None
 
 
 @dataclass(frozen=True)
 class FanReplyState:
-    """
-    Zuletzt empfangene Rückmeldung vom Master/Lüfterbus.
-    """
-
     raw_frame: str | None = None
     category: FrameCategory = FrameCategory.UNKNOWN
     description: str = ""
-    humidity_alarm: bool | None = None
     status_byte: int | None = None
+    filter_alarm: bool | None = None
+    humidity_alarm: bool | None = None
     last_seen_monotonic: float | None = None
 
 
 @dataclass(frozen=True)
 class GatewaySnapshot:
-    """
-    Unveränderliche Momentaufnahme des gesamten Gateway-Zustands.
-    """
-
     panel: PanelState
     desired: DesiredState
     override: OverrideState
     active: ActiveState
     fan_reply: FanReplyState
 
+    @property
+    def desired_mode(self) -> Mode:
+        return self.desired.desired_mode
+
+    @property
+    def desired_speed(self) -> int:
+        return self.desired.desired_speed
+
+    @property
+    def desired_humidity(self) -> int:
+        return self.desired.desired_humidity
+
+    @property
+    def operating_state(self) -> OperatingState:
+        return self.active.operating_state
+
+    @property
+    def humidity_alarm(self) -> bool | None:
+        return self.active.humidity_alarm
+
+    @property
+    def phase(self) -> Phase:
+        return self.active.phase
+
 
 class GatewayState:
-    """
-    Thread-sicherer zentraler Zustand des Gateways.
-
-    Die seriellen Empfangsthreads, der MQTT-Thread und der Override-Sender
-    greifen gleichzeitig darauf zu. Deshalb werden sämtliche Änderungen
-    über ein gemeinsames Lock geschützt.
-    """
+    """Thread-safe source of truth for desired and observed state."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-
         self._panel = PanelState()
         self._desired = DesiredState()
         self._override = OverrideState()
@@ -131,10 +132,6 @@ class GatewayState:
         self._fan_reply = FanReplyState()
 
     def snapshot(self) -> GatewaySnapshot:
-        """
-        Liefert eine konsistente Momentaufnahme aller Zustände.
-        """
-
         with self._lock:
             return GatewaySnapshot(
                 panel=self._panel,
@@ -150,35 +147,44 @@ class GatewayState:
         *,
         seen_at: float | None = None,
     ) -> PanelState:
-        """
-        Übernimmt einen dekodierten Steuerframe des Wandpanels.
-
-        Nur echte oder noch unbekannte gültige Steuerframes verändern den
-        Panelzustand. Statusabfragen wie 020002 werden hier nicht gespeichert.
-        """
-
         if frame.category not in {
             FrameCategory.CONTROL,
             FrameCategory.UNKNOWN_CONTROL,
         }:
             return self.panel_state()
 
-        timestamp = (
-            time.monotonic()
-            if seen_at is None
-            else seen_at
-        )
+        timestamp = time.monotonic() if seen_at is None else seen_at
 
         with self._lock:
+            previous = self._panel
             self._panel = PanelState(
                 raw_frame=frame.raw,
-                mode=frame.mode,
-                speed=frame.speed,
-                phase=frame.phase,
-                humidity_level=frame.humidity_level,
-                operating_state=frame.operating_state,
-                humidity_alarm=frame.humidity_alarm,
-                pending_extract=frame.pending_extract,
+                mode=(
+                    frame.mode
+                    if frame.mode is not Mode.UNKNOWN
+                    else previous.mode
+                ),
+                speed=frame.speed if frame.speed is not None else previous.speed,
+                humidity=(
+                    frame.humidity_level
+                    if frame.humidity_level is not None
+                    else previous.humidity
+                ),
+                operating_state=(
+                    frame.operating_state
+                    if frame.operating_state is not OperatingState.UNKNOWN
+                    else previous.operating_state
+                ),
+                humidity_alarm=(
+                    frame.humidity_alarm
+                    if frame.humidity_alarm is not None
+                    else previous.humidity_alarm
+                ),
+                phase=(
+                    frame.phase
+                    if frame.phase is not Phase.UNKNOWN
+                    else previous.phase
+                ),
                 last_seen_monotonic=timestamp,
             )
             return self._panel
@@ -186,79 +192,6 @@ class GatewayState:
     def panel_state(self) -> PanelState:
         with self._lock:
             return self._panel
-
-    def configure_override(
-        self,
-        *,
-        enabled: bool | None = None,
-        mode: Mode | None = None,
-        speed: int | None = None,
-        humidity_level: int | None = None,
-    ) -> OverrideState:
-        """
-        Ändert den gewünschten Override-Zustand.
-
-        Bei jeder wirksamen Änderung wird generation erhöht. Laufende
-        Override-Sequenzen können dadurch erkennen, dass sie beendet oder
-        neu gestartet werden müssen.
-        """
-
-        if humidity_level is not None and humidity_level not in (1, 2, 3):
-            raise ValueError(f"Unsupported humidity level: {humidity_level}")
-
-        if speed is not None and speed not in (1, 2, 3):
-            raise ValueError(
-                f"Unsupported Ambientika speed: {speed}"
-            )
-
-        with self._lock:
-            new_enabled = (
-                self._override.enabled
-                if enabled is None
-                else enabled
-            )
-            new_mode = (
-                self._override.mode
-                if mode is None
-                else mode
-            )
-            new_speed = (
-                self._override.speed
-                if speed is None
-                else speed
-            )
-
-            new_humidity_level = (self._override.humidity_level if humidity_level is None else humidity_level)
-
-            changed = (
-                new_enabled != self._override.enabled
-                or new_mode != self._override.mode
-                or new_speed != self._override.speed
-                or new_humidity_level != self._override.humidity_level
-            )
-
-            generation = self._override.generation
-
-            if changed:
-                generation += 1
-
-            self._override = OverrideState(
-                enabled=new_enabled,
-                mode=new_mode,
-                speed=new_speed,
-                humidity_level=new_humidity_level,
-                phase=Phase.UNKNOWN,
-                raw_frame=None,
-                generation=generation,
-            )
-            self._desired = DesiredState(
-                mode=new_mode,
-                speed=new_speed,
-                humidity_level=new_humidity_level,
-                generation=generation,
-            )
-
-            return self._override
 
     def desired_state(self) -> DesiredState:
         with self._lock:
@@ -269,16 +202,72 @@ class GatewayState:
         *,
         mode: Mode | None = None,
         speed: int | None = None,
-        humidity_level: int | None = None,
+        humidity: int | None = None,
     ) -> DesiredState:
-        """Update the logical target while preserving override enablement."""
+        if speed is not None and speed not in (1, 2, 3):
+            raise ValueError(f"Unsupported Ambientika speed: {speed}")
+        if humidity is not None and humidity not in (1, 2, 3):
+            raise ValueError(
+                f"Unsupported Ambientika humidity threshold: {humidity}"
+            )
 
-        self.configure_override(
-            mode=mode,
-            speed=speed,
-            humidity_level=humidity_level,
-        )
-        return self.desired_state()
+        with self._lock:
+            new_mode = self._desired.desired_mode if mode is None else mode
+            new_speed = self._desired.desired_speed if speed is None else speed
+            new_humidity = (
+                self._desired.desired_humidity
+                if humidity is None
+                else humidity
+            )
+            changed = (
+                new_mode != self._desired.desired_mode
+                or new_speed != self._desired.desired_speed
+                or new_humidity != self._desired.desired_humidity
+            )
+            generation = self._desired.generation + (1 if changed else 0)
+            self._desired = DesiredState(
+                desired_mode=new_mode,
+                desired_speed=new_speed,
+                desired_humidity=new_humidity,
+                generation=generation,
+            )
+
+            if changed:
+                self._override = replace(
+                    self._override,
+                    phase=Phase.UNKNOWN,
+                    raw_frame=None,
+                    generation=max(
+                        self._override.generation + 1,
+                        generation,
+                    ),
+                )
+
+            return self._desired
+
+    def configure_override(self, *, enabled: bool) -> OverrideState:
+        with self._lock:
+            policy = (
+                ControlPolicy.OVERRIDE
+                if enabled
+                else ControlPolicy.TRANSPARENT
+            )
+            changed = (
+                enabled != self._override.enabled
+                or policy != self._override.policy
+            )
+            generation = max(
+                self._override.generation,
+                self._desired.generation,
+            ) + (1 if changed else 0)
+            self._override = OverrideState(
+                enabled=enabled,
+                policy=policy,
+                phase=Phase.UNKNOWN,
+                raw_frame=None,
+                generation=generation,
+            )
+            return self._override
 
     def override_state(self) -> OverrideState:
         with self._lock:
@@ -291,33 +280,20 @@ class GatewayState:
         raw_frame: str,
         generation: int,
     ) -> OverrideState:
-        """
-        Aktualisiert die gerade aktive Phase einer Override-Sequenz.
-
-        Die Änderung wird nur übernommen, wenn generation noch der aktuellen
-        Override-Generation entspricht. Ein alter Sequenz-Thread kann damit
-        keinen neuen Zustand überschreiben.
-        """
-
         with self._lock:
-            if generation != self._override.generation:
+            if (
+                generation != self._override.generation
+                or not self._override.enabled
+            ):
                 return self._override
-
-            if not self._override.enabled:
-                return self._override
-
             self._override = replace(
                 self._override,
                 phase=phase,
                 raw_frame=raw_frame,
             )
-
             return self._override
 
-    def override_generation_is_current(
-        self,
-        generation: int,
-    ) -> bool:
+    def override_generation_is_current(self, generation: int) -> bool:
         with self._lock:
             return (
                 self._override.enabled
@@ -330,26 +306,18 @@ class GatewayState:
         *,
         sent_at: float | None = None,
     ) -> ActiveState:
-        """
-        Markiert einen an die Lüfter weitergeleiteten Panel-Steuerframe.
-        """
-
-        timestamp = (
-            time.monotonic()
-            if sent_at is None
-            else sent_at
-        )
-
+        timestamp = time.monotonic() if sent_at is None else sent_at
         with self._lock:
+            panel = self._panel
             self._active = ActiveState(
                 source="panel",
                 raw_frame=frame.raw,
-                mode=frame.mode,
-                speed=frame.speed,
-                phase=frame.phase,
-                operating_state=frame.operating_state,
-                humidity_alarm=frame.humidity_alarm,
-                pending_extract=frame.pending_extract,
+                mode=panel.mode,
+                speed=panel.speed,
+                humidity=panel.humidity,
+                operating_state=panel.operating_state,
+                humidity_alarm=panel.humidity_alarm,
+                phase=panel.phase,
                 last_sent_monotonic=timestamp,
             )
             return self._active
@@ -360,30 +328,22 @@ class GatewayState:
         raw_frame: str,
         mode: Mode,
         speed: int,
+        humidity: int,
+        operating_state: OperatingState,
         phase: Phase,
+        humidity_alarm: bool | None = None,
         sent_at: float | None = None,
     ) -> ActiveState:
-        """
-        Markiert einen vom Gateway erzeugten und gesendeten Override-Frame.
-        """
-
-        if speed not in (1, 2, 3):
-            raise ValueError(
-                f"Unsupported Ambientika speed: {speed}"
-            )
-
-        timestamp = (
-            time.monotonic()
-            if sent_at is None
-            else sent_at
-        )
-
+        timestamp = time.monotonic() if sent_at is None else sent_at
         with self._lock:
             self._active = ActiveState(
                 source="override",
                 raw_frame=raw_frame,
                 mode=mode,
                 speed=speed,
+                humidity=humidity,
+                operating_state=operating_state,
+                humidity_alarm=humidity_alarm,
                 phase=phase,
                 last_sent_monotonic=timestamp,
             )
@@ -399,25 +359,22 @@ class GatewayState:
         *,
         seen_at: float | None = None,
     ) -> FanReplyState:
-        """
-        Speichert die letzte Rückmeldung oder Startmeldung des Lüfterbusses.
-        """
-
-        timestamp = (
-            time.monotonic()
-            if seen_at is None
-            else seen_at
-        )
-
+        timestamp = time.monotonic() if seen_at is None else seen_at
         with self._lock:
             self._fan_reply = FanReplyState(
                 raw_frame=frame.raw,
                 category=frame.category,
                 description=frame.description,
-                humidity_alarm=frame.humidity_alarm,
                 status_byte=frame.status_byte,
+                filter_alarm=frame.filter_alarm,
+                humidity_alarm=frame.humidity_alarm,
                 last_seen_monotonic=timestamp,
             )
+            if frame.humidity_alarm is not None:
+                self._active = replace(
+                    self._active,
+                    humidity_alarm=frame.humidity_alarm,
+                )
             return self._fan_reply
 
     def fan_reply_state(self) -> FanReplyState:
@@ -425,41 +382,15 @@ class GatewayState:
             return self._fan_reply
 
     def control_source(self) -> str:
-        """
-        Liefert die momentan vorgesehene Steuerquelle.
-
-        Das bedeutet nicht zwingend, dass bereits ein entsprechender Frame
-        gesendet wurde.
-        """
-
         with self._lock:
-            return (
-                "override"
-                if self._override.enabled
-                else "panel"
-            )
+            return self._override.policy.value
 
-    def panel_age_seconds(
-        self,
-        *,
-        now: float | None = None,
-    ) -> float | None:
-        """
-        Sekunden seit dem letzten Steuerframe des Wandpanels.
-        """
-
+    def panel_age_seconds(self, *, now: float | None = None) -> float | None:
         with self._lock:
             last_seen = self._panel.last_seen_monotonic
-
         if last_seen is None:
             return None
-
-        current = (
-            time.monotonic()
-            if now is None
-            else now
-        )
-
+        current = time.monotonic() if now is None else now
         return max(0.0, current - last_seen)
 
     def fan_reply_age_seconds(
@@ -467,20 +398,9 @@ class GatewayState:
         *,
         now: float | None = None,
     ) -> float | None:
-        """
-        Sekunden seit der letzten Rückmeldung vom Lüfterbus.
-        """
-
         with self._lock:
             last_seen = self._fan_reply.last_seen_monotonic
-
         if last_seen is None:
             return None
-
-        current = (
-            time.monotonic()
-            if now is None
-            else now
-        )
-
+        current = time.monotonic() if now is None else now
         return max(0.0, current - last_seen)
