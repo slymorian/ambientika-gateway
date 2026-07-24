@@ -189,6 +189,8 @@ class DecodedFrame:
     status_byte: int | None = None
     operating_state: OperatingState = OperatingState.UNKNOWN
     possible_modes: tuple[Mode, ...] = ()
+    humidity_alarm: bool | None = None
+    pending_extract: bool = False
 
 
 @dataclass(frozen=True)
@@ -395,6 +397,29 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         checksum_valid=True,
     ),
 
+    # Beobachteter Automatikbetrieb, Feuchteschwelle 2, kein Alarm.
+    "01720073": DecodedFrame(
+        raw="01720073", category=FrameCategory.CONTROL, mode=Mode.AUTOMATIC,
+        humidity_level=2, phase=Phase.FIXED, checksum_valid=True,
+        description="Automatik, Feuchteschwelle 2, kein Feuchtealarm",
+        operating_state=OperatingState.IDLE, humidity_alarm=False,
+        possible_modes=(Mode.AUTOMATIC,),
+    ),
+    # Automatik-WRG Phase A mit erkanntem Alarm; Umschaltung auf Abluft steht aus.
+    "016A046F": DecodedFrame(
+        raw="016A046F", category=FrameCategory.CONTROL, mode=Mode.AUTOMATIC,
+        speed=2, humidity_level=2, phase=Phase.PHASE_A, checksum_valid=True,
+        description="Automatik-WRG Phase A; Feuchtealarm erkannt",
+        operating_state=OperatingState.ALTERNATING, humidity_alarm=True,
+        pending_extract=True, possible_modes=(Mode.AUTOMATIC,),
+    ),
+    "01620467": DecodedFrame(
+        raw="01620467", category=FrameCategory.CONTROL, mode=Mode.AUTOMATIC,
+        speed=2, humidity_level=2, phase=Phase.TRANSITION, checksum_valid=True,
+        description="Übergang vom WRG-Betrieb in Feuchtealarm-Abluft",
+        operating_state=OperatingState.TRANSITION, humidity_alarm=True,
+        pending_extract=True, possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
+    ),
     # Feuchteschwellen-/Modusrahmen für Automatic und Monitoring.
     #
     # Diese Frames enthalten die gewählte Feuchteschwelle. Sie beweisen
@@ -435,12 +460,10 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
     "01760473": DecodedFrame(
-        raw="01760473",
-        category=FrameCategory.CONTROL,
-        mode=Mode.UNKNOWN,
-        humidity_level=2,
-        checksum_valid=True,
-        description="Feuchteschwelle 2, Automatic oder Monitoring",
+        raw="01760473", category=FrameCategory.CONTROL, mode=Mode.UNKNOWN,
+        speed=2, humidity_level=2, phase=Phase.FIXED, checksum_valid=True,
+        description="Feuchtealarm-Abluft, Feuchteschwelle 2",
+        operating_state=OperatingState.EXTRACT, humidity_alarm=True,
         possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
     "01B60CBB": DecodedFrame(
@@ -545,11 +568,9 @@ SHORT_FRAMES: dict[tuple[str, str], DecodedFrame] = {
         status_byte=0x02,
     ),
     ("fans", "000808"): DecodedFrame(
-        raw="000808",
-        category=FrameCategory.REPLY,
-        description="Erweiterte Statusantwort des Masters",
-        filter_alarm=False,
-        status_byte=0x08,
+        raw="000808", category=FrameCategory.REPLY,
+        description="Masterstatus: Feuchtealarm aktiv",
+        status_byte=0x08, humidity_alarm=True,
     ),
     ("fans", "000A0A"): DecodedFrame(
         raw="000A0A",
@@ -707,7 +728,7 @@ def filter_alarm_from_reply(payload: str) -> bool | None:
         return True
 
     if normalized == "000808":
-        return False
+        return None
 
     return None
 

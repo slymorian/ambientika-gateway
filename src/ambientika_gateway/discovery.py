@@ -133,7 +133,7 @@ def build_discovery_payload(
             ),
             "percentage_state_topic": _topic(
                 config,
-                "state/selected_speed",
+                "state/desired_speed",
             ),
             "speed_range_min": 1,
             "speed_range_max": 3,
@@ -144,7 +144,7 @@ def build_discovery_payload(
             ),
             "preset_mode_state_topic": _topic(
                 config,
-                "state/selected_mode",
+                "state/desired_mode",
             ),
             "preset_modes": [
                 "manual_alternating",
@@ -194,7 +194,7 @@ def build_discovery_payload(
             ),
             "state_topic": _topic(
                 config,
-                "state/selected_mode",
+                "state/desired_mode",
             ),
             "options": mqtt_mode_values(),
 
@@ -215,7 +215,7 @@ def build_discovery_payload(
             ),
             "state_topic": _topic(
                 config,
-                "state/selected_speed",
+                "state/desired_speed",
             ),
             "options": [
                 "1",
@@ -225,6 +225,34 @@ def build_discovery_payload(
             "icon": "mdi:fan-chevron-up",
         },
 
+
+        "humidity_level": {
+            "p": "select", "name": "Feuchteschwelle",
+            "unique_id": _unique_id(config, "humidity_level"),
+            "command_topic": _topic(config, "humidity_level/set"),
+            "state_topic": _topic(config, "state/desired_humidity_level"),
+            "options": ["1", "2", "3"], "icon": "mdi:water-percent",
+        },
+        "operating_state": {
+            "p": "sensor", "name": "Betriebszustand",
+            "unique_id": _unique_id(config, "operating_state"),
+            "state_topic": _topic(config, "state/operating_state"),
+            "icon": "mdi:state-machine",
+        },
+        "humidity_alarm": {
+            "p": "binary_sensor", "name": "Feuchtealarm",
+            "unique_id": _unique_id(config, "humidity_alarm"),
+            "state_topic": _topic(config, "state/humidity_alarm"),
+            "payload_on": "ON", "payload_off": "OFF",
+            "device_class": "moisture",
+        },
+        "pending_extract": {
+            "p": "binary_sensor", "name": "Abluft-Umschaltung vorgemerkt",
+            "unique_id": _unique_id(config, "pending_extract"),
+            "state_topic": _topic(config, "state/pending_extract"),
+            "payload_on": "ON", "payload_off": "OFF",
+            "icon": "mdi:timer-sand",
+        },
         # -------------------------------------------------
         # Aktiver Zustand
         # -------------------------------------------------

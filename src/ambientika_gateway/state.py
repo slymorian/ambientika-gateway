@@ -9,6 +9,7 @@ from .protocol import (
     FrameCategory,
     Mode,
     Phase,
+    OperatingState,
 )
 
 
@@ -22,11 +23,29 @@ class PanelState:
     mode: Mode = Mode.UNKNOWN
     speed: int | None = None
     phase: Phase = Phase.UNKNOWN
+    humidity_level: int | None = None
+    operating_state: OperatingState = OperatingState.UNKNOWN
+    humidity_alarm: bool | None = None
+    pending_extract: bool = False
     last_seen_monotonic: float | None = None
 
     @property
     def available(self) -> bool:
         return self.last_seen_monotonic is not None
+
+
+@dataclass(frozen=True)
+class DesiredState:
+    """Logical target selected through MQTT/Home Assistant.
+
+    It is deliberately separate from the runtime override phase so the
+    future assist controller can compare panel, desired and active state.
+    """
+
+    mode: Mode = Mode.EXTRACT
+    speed: int = 3
+    humidity_level: int = 2
+    generation: int = 0
 
 
 @dataclass(frozen=True)
@@ -38,6 +57,7 @@ class OverrideState:
     enabled: bool = False
     mode: Mode = Mode.EXTRACT
     speed: int = 3
+    humidity_level: int = 2
     phase: Phase = Phase.UNKNOWN
     raw_frame: str | None = None
     generation: int = 0
@@ -59,6 +79,9 @@ class ActiveState:
     mode: Mode = Mode.UNKNOWN
     speed: int | None = None
     phase: Phase = Phase.UNKNOWN
+    operating_state: OperatingState = OperatingState.UNKNOWN
+    humidity_alarm: bool | None = None
+    pending_extract: bool = False
     last_sent_monotonic: float | None = None
 
 
@@ -71,6 +94,8 @@ class FanReplyState:
     raw_frame: str | None = None
     category: FrameCategory = FrameCategory.UNKNOWN
     description: str = ""
+    humidity_alarm: bool | None = None
+    status_byte: int | None = None
     last_seen_monotonic: float | None = None
 
 
@@ -81,6 +106,7 @@ class GatewaySnapshot:
     """
 
     panel: PanelState
+    desired: DesiredState
     override: OverrideState
     active: ActiveState
     fan_reply: FanReplyState
@@ -99,6 +125,7 @@ class GatewayState:
         self._lock = threading.RLock()
 
         self._panel = PanelState()
+        self._desired = DesiredState()
         self._override = OverrideState()
         self._active = ActiveState()
         self._fan_reply = FanReplyState()
@@ -111,6 +138,7 @@ class GatewayState:
         with self._lock:
             return GatewaySnapshot(
                 panel=self._panel,
+                desired=self._desired,
                 override=self._override,
                 active=self._active,
                 fan_reply=self._fan_reply,
@@ -147,6 +175,10 @@ class GatewayState:
                 mode=frame.mode,
                 speed=frame.speed,
                 phase=frame.phase,
+                humidity_level=frame.humidity_level,
+                operating_state=frame.operating_state,
+                humidity_alarm=frame.humidity_alarm,
+                pending_extract=frame.pending_extract,
                 last_seen_monotonic=timestamp,
             )
             return self._panel
@@ -161,6 +193,7 @@ class GatewayState:
         enabled: bool | None = None,
         mode: Mode | None = None,
         speed: int | None = None,
+        humidity_level: int | None = None,
     ) -> OverrideState:
         """
         Ändert den gewünschten Override-Zustand.
@@ -169,6 +202,9 @@ class GatewayState:
         Override-Sequenzen können dadurch erkennen, dass sie beendet oder
         neu gestartet werden müssen.
         """
+
+        if humidity_level is not None and humidity_level not in (1, 2, 3):
+            raise ValueError(f"Unsupported humidity level: {humidity_level}")
 
         if speed is not None and speed not in (1, 2, 3):
             raise ValueError(
@@ -192,10 +228,13 @@ class GatewayState:
                 else speed
             )
 
+            new_humidity_level = (self._override.humidity_level if humidity_level is None else humidity_level)
+
             changed = (
                 new_enabled != self._override.enabled
                 or new_mode != self._override.mode
                 or new_speed != self._override.speed
+                or new_humidity_level != self._override.humidity_level
             )
 
             generation = self._override.generation
@@ -207,12 +246,39 @@ class GatewayState:
                 enabled=new_enabled,
                 mode=new_mode,
                 speed=new_speed,
+                humidity_level=new_humidity_level,
                 phase=Phase.UNKNOWN,
                 raw_frame=None,
                 generation=generation,
             )
+            self._desired = DesiredState(
+                mode=new_mode,
+                speed=new_speed,
+                humidity_level=new_humidity_level,
+                generation=generation,
+            )
 
             return self._override
+
+    def desired_state(self) -> DesiredState:
+        with self._lock:
+            return self._desired
+
+    def configure_desired(
+        self,
+        *,
+        mode: Mode | None = None,
+        speed: int | None = None,
+        humidity_level: int | None = None,
+    ) -> DesiredState:
+        """Update the logical target while preserving override enablement."""
+
+        self.configure_override(
+            mode=mode,
+            speed=speed,
+            humidity_level=humidity_level,
+        )
+        return self.desired_state()
 
     def override_state(self) -> OverrideState:
         with self._lock:
@@ -281,6 +347,9 @@ class GatewayState:
                 mode=frame.mode,
                 speed=frame.speed,
                 phase=frame.phase,
+                operating_state=frame.operating_state,
+                humidity_alarm=frame.humidity_alarm,
+                pending_extract=frame.pending_extract,
                 last_sent_monotonic=timestamp,
             )
             return self._active
@@ -345,6 +414,8 @@ class GatewayState:
                 raw_frame=frame.raw,
                 category=frame.category,
                 description=frame.description,
+                humidity_alarm=frame.humidity_alarm,
+                status_byte=frame.status_byte,
                 last_seen_monotonic=timestamp,
             )
             return self._fan_reply

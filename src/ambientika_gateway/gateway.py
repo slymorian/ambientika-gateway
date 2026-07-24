@@ -5,6 +5,7 @@ import threading
 import time
 
 from .config import GatewayConfig
+from .frame_generator import FrameGenerator, ProgramKind
 from .mqtt_client import AmbientikaMqttClient
 from .protocol import (
     DecodedFrame,
@@ -12,8 +13,6 @@ from .protocol import (
     Mode,
     Phase,
     SequenceStep,
-    alternating_sequence,
-    fixed_command_frame,
     make_packet,
 )
 from .serial_bus import SerialBus
@@ -43,6 +42,7 @@ class AmbientikaGateway:
     ) -> None:
         self._config = config
         self._state = GatewayState()
+        self._frame_generator = FrameGenerator()
 
         self._stop_event = threading.Event()
         self._override_changed_event = threading.Event()
@@ -65,6 +65,7 @@ class AmbientikaGateway:
             on_override=self._handle_override_command,
             on_mode=self._handle_mode_command,
             on_speed=self._handle_speed_command,
+            on_humidity=self._handle_humidity_command,
         )
 
         self._override_thread: threading.Thread | None = None
@@ -274,11 +275,12 @@ class AmbientikaGateway:
         self,
         enabled: bool,
     ) -> None:
-        current = self._state.override_state()
+        current = self._state.desired_state()
 
         if enabled and not self._selection_supported(
             current.mode,
             current.speed,
+            current.humidity_level,
         ):
             message = (
                 "Override nicht aktiviert: "
@@ -309,23 +311,24 @@ class AmbientikaGateway:
         mode: Mode,
     ) -> None:
         current = self._state.override_state()
+        desired = self._state.desired_state()
 
         if current.enabled and not self._selection_supported(
             mode,
-            current.speed,
+            desired.speed,
+            desired.humidity_level,
         ):
             message = (
                 "Modusänderung abgelehnt: "
-                f"{mode.value}, Stufe {current.speed} "
+                f"{mode.value}, Stufe {desired.speed} "
                 "wird noch nicht unterstützt"
             )
             LOGGER.warning(message)
             self._mqtt.publish_error(message)
             return
 
-        updated = self._state.configure_override(
-            mode=mode,
-        )
+        self._state.configure_desired(mode=mode)
+        updated = self._state.override_state()
 
         LOGGER.info(
             "Override-Modus gewählt: %s; Generation %s",
@@ -343,23 +346,24 @@ class AmbientikaGateway:
         speed: int,
     ) -> None:
         current = self._state.override_state()
+        desired = self._state.desired_state()
 
         if current.enabled and not self._selection_supported(
-            current.mode,
+            desired.mode,
             speed,
+            desired.humidity_level,
         ):
             message = (
                 "Stufenänderung abgelehnt: "
-                f"{current.mode.value}, Stufe {speed} "
+                f"{desired.mode.value}, Stufe {speed} "
                 "wird noch nicht unterstützt"
             )
             LOGGER.warning(message)
             self._mqtt.publish_error(message)
             return
 
-        updated = self._state.configure_override(
-            speed=speed,
-        )
+        self._state.configure_desired(speed=speed)
+        updated = self._state.override_state()
 
         LOGGER.info(
             "Override-Stufe gewählt: %s; Generation %s",
@@ -372,38 +376,49 @@ class AmbientikaGateway:
 
         self._override_changed_event.set()
 
+    def _handle_humidity_command(self, humidity_level: int) -> None:
+        override = self._state.override_state()
+        desired = self._state.desired_state()
+
+        if override.enabled and not self._selection_supported(
+            desired.mode,
+            desired.speed,
+            humidity_level,
+        ):
+            message = (
+                "Feuchteschwelle abgelehnt: "
+                f"{desired.mode.value}, Stufe {desired.speed}, "
+                f"Schwelle {humidity_level} ist nicht bestätigt"
+            )
+            LOGGER.warning(message)
+            self._mqtt.publish_error(message)
+            return
+
+        self._state.configure_desired(humidity_level=humidity_level)
+        updated = self._state.override_state()
+        LOGGER.info(
+            "Feuchteschwelle gewählt: %s; Generation %s",
+            humidity_level,
+            updated.generation,
+        )
+        self._mqtt.clear_error()
+        self._mqtt.publish_override_state()
+        self._override_changed_event.set()
+
     # ---------------------------------------------------------
     # Override-Sequenzen
     # ---------------------------------------------------------
-
-    @staticmethod
-    def _fixed_frame_or_none(
-        mode: Mode,
-        speed: int,
-    ) -> str | None:
-        try:
-            return fixed_command_frame(mode, speed)
-        except ValueError:
-            return None
-
-    @staticmethod
-    def _alternating_sequence_or_none(
-        mode: Mode,
-        speed: int,
-    ) -> tuple[SequenceStep, ...] | None:
-        try:
-            return alternating_sequence(mode, speed)
-        except ValueError:
-            return None
 
     def _selection_supported(
         self,
         mode: Mode,
         speed: int,
+        humidity_level: int,
     ) -> bool:
-        return (
-            self._fixed_frame_or_none(mode, speed) is not None
-            or self._alternating_sequence_or_none(mode, speed) is not None
+        return self._frame_generator.supports(
+            mode=mode,
+            speed=speed,
+            humidity_level=humidity_level,
         )
 
     def _override_loop(self) -> None:
@@ -423,34 +438,40 @@ class AmbientikaGateway:
                 continue
 
             generation = override.generation
-            mode = override.mode
-            speed = override.speed
+            desired = self._state.desired_state()
+            mode = desired.mode
+            speed = desired.speed
 
-            fixed_frame = self._fixed_frame_or_none(
-                mode,
-                speed,
-            )
+            try:
+                program = self._frame_generator.build(
+                    mode=mode,
+                    speed=speed,
+                    humidity_level=desired.humidity_level,
+                )
+            except ValueError as exc:
+                message = str(exc)
+                LOGGER.error(message)
+                self._mqtt.publish_error(message)
+                self._state.configure_override(enabled=False)
+                self._mqtt.publish_override_state()
+                continue
 
-            if fixed_frame is not None:
+            if program.kind is ProgramKind.FIXED:
+                assert program.fixed_frame is not None
                 self._run_fixed_override(
                     generation=generation,
                     mode=mode,
                     speed=speed,
-                    frame=fixed_frame,
+                    frame=program.fixed_frame,
                 )
                 continue
 
-            sequence = self._alternating_sequence_or_none(
-                mode,
-                speed,
-            )
-
-            if sequence is not None:
+            if program.kind is ProgramKind.ALTERNATING:
                 self._run_alternating_override(
                     generation=generation,
                     mode=mode,
                     speed=speed,
-                    sequence=sequence,
+                    sequence=program.sequence,
                 )
                 continue
 
