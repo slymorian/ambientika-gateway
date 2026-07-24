@@ -448,6 +448,22 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         operating_state=OperatingState.EXTRACT,
         possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
+    "01740471": DecodedFrame(
+        raw="01740471",
+        category=FrameCategory.CONTROL,
+        mode=Mode.UNKNOWN,
+        speed=2,
+        humidity_level=2,
+        phase=Phase.FIXED,
+        checksum_valid=True,
+        description=(
+            "Feuchtealarm-Abluftbetrieb, Stufe 2 "
+            "(beobachtete Statusvariante)"
+        ),
+        humidity_alarm=True,
+        operating_state=OperatingState.EXTRACT,
+        possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
+    ),
     "01720073": DecodedFrame(
         raw="01720073",
         category=FrameCategory.CONTROL,
@@ -593,6 +609,16 @@ SHORT_FRAMES: dict[tuple[str, str], DecodedFrame] = {
         filter_alarm=False,
         humidity_alarm=True,
         status_byte=0x08,
+    ),
+    ("fans", "000909"): DecodedFrame(
+        raw="000909",
+        category=FrameCategory.REPLY,
+        description=(
+            "Erweiterte Statusantwort des Masters; "
+            "Feuchtealarm aktiv (Statusvariante 0x09)"
+        ),
+        humidity_alarm=True,
+        status_byte=0x09,
     ),
     ("fans", "000A0A"): DecodedFrame(
         raw="000A0A",

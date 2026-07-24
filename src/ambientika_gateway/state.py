@@ -336,6 +336,12 @@ class GatewayState:
     ) -> ActiveState:
         timestamp = time.monotonic() if sent_at is None else sent_at
         with self._lock:
+            observed_humidity_alarm = humidity_alarm
+            if observed_humidity_alarm is None:
+                observed_humidity_alarm = self._fan_reply.humidity_alarm
+            if observed_humidity_alarm is None:
+                observed_humidity_alarm = self._active.humidity_alarm
+
             self._active = ActiveState(
                 source="override",
                 raw_frame=raw_frame,
@@ -343,7 +349,7 @@ class GatewayState:
                 speed=speed,
                 humidity=humidity,
                 operating_state=operating_state,
-                humidity_alarm=humidity_alarm,
+                humidity_alarm=observed_humidity_alarm,
                 phase=phase,
                 last_sent_monotonic=timestamp,
             )

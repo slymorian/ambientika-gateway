@@ -8,6 +8,7 @@ from .protocol import (
     alternating_sequence,
     fixed_command_frame,
     make_packet,
+    monitoring_command_frame,
 )
 
 
@@ -41,13 +42,21 @@ class FrameGenerator:
     generation without duplicating protocol constants.
     """
 
-    def plan(
+    def normalize(
         self,
         *,
         mode: Mode,
         speed: int,
         humidity: int,
-    ) -> ControlPlan:
+    ) -> ControlSelection:
+        """Normalize irrelevant values to a confirmed protocol selection.
+
+        Home Assistant publishes mode, speed and humidity independently. A
+        mode change must therefore not fail merely because the retained speed
+        or humidity value is irrelevant for the new mode. The desired state
+        itself remains unchanged, so switching back restores the user's last
+        speed/threshold selection.
+        """
         if speed not in (1, 2, 3):
             raise ValueError(f"Unsupported Ambientika speed: {speed}")
 
@@ -56,14 +65,45 @@ class FrameGenerator:
                 f"Unsupported Ambientika humidity threshold: {humidity}"
             )
 
-        selection = ControlSelection(
+        if mode is Mode.SILENT:
+            return ControlSelection(mode=mode, speed=1, humidity=2)
+
+        if mode is Mode.AUTOMATIC:
+            # Only the stable automatic command for threshold 2 is confirmed.
+            return ControlSelection(mode=mode, speed=2, humidity=2)
+
+        if mode is Mode.MONITORING:
+            return ControlSelection(mode=mode, speed=2, humidity=humidity)
+
+        return ControlSelection(mode=mode, speed=speed, humidity=humidity)
+
+    def plan(
+        self,
+        *,
+        mode: Mode,
+        speed: int,
+        humidity: int,
+    ) -> ControlPlan:
+        selection = self.normalize(
             mode=mode,
             speed=speed,
             humidity=humidity,
         )
 
+        if selection.mode is Mode.AUTOMATIC:
+            return ControlPlan(
+                selection=selection,
+                fixed_frame="01720073",
+            )
+
+        if selection.mode is Mode.MONITORING:
+            return ControlPlan(
+                selection=selection,
+                fixed_frame=monitoring_command_frame(selection.humidity),
+            )
+
         try:
-            frame = fixed_command_frame(mode, speed)
+            frame = fixed_command_frame(selection.mode, selection.speed)
         except ValueError:
             frame = None
 
@@ -74,7 +114,10 @@ class FrameGenerator:
             )
 
         try:
-            sequence = alternating_sequence(mode, speed)
+            sequence = alternating_sequence(
+                selection.mode,
+                selection.speed,
+            )
         except ValueError:
             sequence = ()
 
@@ -86,7 +129,8 @@ class FrameGenerator:
 
         raise ValueError(
             "Unsupported Ambientika control selection: "
-            f"{mode.value}, speed {speed}, humidity {humidity}"
+            f"{selection.mode.value}, speed {selection.speed}, "
+            f"humidity {selection.humidity}"
         )
 
     def supports(
