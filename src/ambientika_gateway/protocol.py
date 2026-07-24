@@ -157,6 +157,22 @@ class Phase(str, Enum):
     UNKNOWN = "unknown"
 
 
+class OperatingState(str, Enum):
+    """Physical operating state commanded on the fan bus.
+
+    The selected panel mode and the physical fan state are not always the
+    same. Automatic and Monitoring, for example, share the same extract
+    state while a humidity alarm is active.
+    """
+
+    ALTERNATING = "alternating"
+    EXTRACT = "extract"
+    SUPPLY = "supply"
+    IDLE = "idle"
+    TRANSITION = "transition"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True)
 class DecodedFrame:
     raw: str
@@ -171,6 +187,8 @@ class DecodedFrame:
     filter_reset: bool = False
     filter_alarm: bool | None = None
     status_byte: int | None = None
+    operating_state: OperatingState = OperatingState.UNKNOWN
+    possible_modes: tuple[Mode, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -181,74 +199,90 @@ class SequenceStep:
 
 
 CONTROL_FRAMES: dict[str, DecodedFrame] = {
-    # Manuell alternierend, Stufe 1
+    # Wechselbetrieb, Stufe 1 (z. B. Automatic oder manuell)
     "01A500A4": DecodedFrame(
         raw="01A500A4",
         category=FrameCategory.CONTROL,
-        mode=Mode.MANUAL_ALTERNATING,
+        mode=Mode.UNKNOWN,
+        possible_modes=(Mode.AUTOMATIC, Mode.MANUAL_ALTERNATING),
         speed=1,
         phase=Phase.PHASE_A,
         checksum_valid=True,
+        operating_state=OperatingState.ALTERNATING,
     ),
     "01A100A0": DecodedFrame(
         raw="01A100A0",
         category=FrameCategory.CONTROL,
-        mode=Mode.MANUAL_ALTERNATING,
+        mode=Mode.UNKNOWN,
+        possible_modes=(Mode.AUTOMATIC, Mode.MANUAL_ALTERNATING),
         speed=1,
         phase=Phase.TRANSITION,
         checksum_valid=True,
+        operating_state=OperatingState.TRANSITION,
     ),
     "01A900A8": DecodedFrame(
         raw="01A900A8",
         category=FrameCategory.CONTROL,
-        mode=Mode.MANUAL_ALTERNATING,
+        mode=Mode.UNKNOWN,
+        possible_modes=(Mode.AUTOMATIC, Mode.MANUAL_ALTERNATING),
         speed=1,
         phase=Phase.PHASE_B,
         checksum_valid=True,
+        operating_state=OperatingState.ALTERNATING,
     ),
 
-    # Manuell alternierend, Stufe 2
+    # Wechselbetrieb, Stufe 2 (z. B. Automatic oder manuell)
     "01AA00AB": DecodedFrame(
         raw="01AA00AB",
         category=FrameCategory.CONTROL,
-        mode=Mode.MANUAL_ALTERNATING,
+        mode=Mode.UNKNOWN,
+        possible_modes=(Mode.AUTOMATIC, Mode.MANUAL_ALTERNATING),
         speed=2,
         phase=Phase.PHASE_A,
         checksum_valid=True,
+        operating_state=OperatingState.ALTERNATING,
     ),
     "01A200A3": DecodedFrame(
         raw="01A200A3",
         category=FrameCategory.CONTROL,
-        mode=Mode.MANUAL_ALTERNATING,
+        mode=Mode.UNKNOWN,
+        possible_modes=(Mode.AUTOMATIC, Mode.MANUAL_ALTERNATING),
         speed=2,
         phase=Phase.TRANSITION,
         checksum_valid=True,
+        operating_state=OperatingState.TRANSITION,
     ),
     "01A600A7": DecodedFrame(
         raw="01A600A7",
         category=FrameCategory.CONTROL,
-        mode=Mode.MANUAL_ALTERNATING,
+        mode=Mode.UNKNOWN,
+        possible_modes=(Mode.AUTOMATIC, Mode.MANUAL_ALTERNATING),
         speed=2,
         phase=Phase.PHASE_B,
         checksum_valid=True,
+        operating_state=OperatingState.ALTERNATING,
     ),
 
-    # Manuell alternierend, Stufe 3
+    # Wechselbetrieb, Stufe 3 (z. B. Automatic oder manuell)
     "01A700A6": DecodedFrame(
         raw="01A700A6",
         category=FrameCategory.CONTROL,
-        mode=Mode.MANUAL_ALTERNATING,
+        mode=Mode.UNKNOWN,
+        possible_modes=(Mode.AUTOMATIC, Mode.MANUAL_ALTERNATING),
         speed=3,
         phase=Phase.PHASE_A,
         checksum_valid=True,
+        operating_state=OperatingState.ALTERNATING,
     ),
     "01A300A2": DecodedFrame(
         raw="01A300A2",
         category=FrameCategory.CONTROL,
-        mode=Mode.MANUAL_ALTERNATING,
+        mode=Mode.UNKNOWN,
+        possible_modes=(Mode.AUTOMATIC, Mode.MANUAL_ALTERNATING),
         speed=3,
         phase=Phase.TRANSITION,
         checksum_valid=True,
+        operating_state=OperatingState.TRANSITION,
     ),
 
     # Beide Lüfter dauerhaft Abluft
@@ -259,6 +293,7 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         speed=1,
         phase=Phase.FIXED,
         checksum_valid=True,
+        operating_state=OperatingState.EXTRACT,
     ),
     "01760077": DecodedFrame(
         raw="01760077",
@@ -267,6 +302,7 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         speed=2,
         phase=Phase.FIXED,
         checksum_valid=True,
+        operating_state=OperatingState.EXTRACT,
     ),
     "01770076": DecodedFrame(
         raw="01770076",
@@ -275,6 +311,7 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         speed=3,
         phase=Phase.FIXED,
         checksum_valid=True,
+        operating_state=OperatingState.EXTRACT,
     ),
 
     # Beide Lüfter dauerhaft Zuluft
@@ -285,6 +322,7 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         speed=1,
         phase=Phase.FIXED,
         checksum_valid=True,
+        operating_state=OperatingState.SUPPLY,
     ),
     "017A007B": DecodedFrame(
         raw="017A007B",
@@ -293,6 +331,7 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         speed=2,
         phase=Phase.FIXED,
         checksum_valid=True,
+        operating_state=OperatingState.SUPPLY,
     ),
     "017B007A": DecodedFrame(
         raw="017B007A",
@@ -301,6 +340,7 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         speed=3,
         phase=Phase.FIXED,
         checksum_valid=True,
+        operating_state=OperatingState.SUPPLY,
     ),
 
     # Master Zuluft, Slave Abluft
@@ -355,60 +395,72 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         checksum_valid=True,
     ),
 
-    # Überwachungsmodus / Feuchteschwelle
+    # Feuchteschwellen-/Modusrahmen für Automatic und Monitoring.
     #
-    # Die Varianten mit Byte 3 = 0x0C sind die beim Tastendruck
-    # beobachteten Übergangsframes. Die stabilen Sollzustände verwenden 0x04.
+    # Diese Frames enthalten die gewählte Feuchteschwelle. Sie beweisen
+    # weder einen aktiven Feuchtealarm noch einen bestimmten physischen
+    # Lüfterzustand. Insbesondere wurde 01B604B3 bei Auto, Schwelle 3,
+    # Feuchtealarm AUS und gleichzeitigem Wechselbetrieb beobachtet.
+    #
+    # Byte 3 = 0x0C wurde beim Tastendruck beobachtet, Byte 3 = 0x04
+    # im anschließend stabilen Zustand. Der Filteralarm wird ausschließlich
+    # aus den Master-Antworten 000808 / 000A0A abgeleitet.
     "01360C3B": DecodedFrame(
         raw="01360C3B",
         category=FrameCategory.CONTROL,
-        mode=Mode.MONITORING,
+        mode=Mode.UNKNOWN,
         humidity_level=1,
         checksum_valid=True,
-        description="Überwachung, Feuchteschwelle 1 (Tastendruck)",
+        description="Feuchteschwelle 1, Automatic oder Monitoring (Tastendruck)",
         button_press=True,
+        possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
     "01360433": DecodedFrame(
         raw="01360433",
         category=FrameCategory.CONTROL,
-        mode=Mode.MONITORING,
+        mode=Mode.UNKNOWN,
         humidity_level=1,
         checksum_valid=True,
-        description="Überwachung, Feuchteschwelle 1",
+        description="Feuchteschwelle 1, Automatic oder Monitoring",
+        possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
     "01760C7B": DecodedFrame(
         raw="01760C7B",
         category=FrameCategory.CONTROL,
-        mode=Mode.MONITORING,
+        mode=Mode.UNKNOWN,
         humidity_level=2,
         checksum_valid=True,
-        description="Überwachung, Feuchteschwelle 2 (Tastendruck)",
+        description="Feuchteschwelle 2, Automatic oder Monitoring (Tastendruck)",
         button_press=True,
+        possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
     "01760473": DecodedFrame(
         raw="01760473",
         category=FrameCategory.CONTROL,
-        mode=Mode.MONITORING,
+        mode=Mode.UNKNOWN,
         humidity_level=2,
         checksum_valid=True,
-        description="Überwachung, Feuchteschwelle 2",
+        description="Feuchteschwelle 2, Automatic oder Monitoring",
+        possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
     "01B60CBB": DecodedFrame(
         raw="01B60CBB",
         category=FrameCategory.CONTROL,
-        mode=Mode.MONITORING,
+        mode=Mode.UNKNOWN,
         humidity_level=3,
         checksum_valid=True,
-        description="Überwachung, Feuchteschwelle 3 (Tastendruck)",
+        description="Feuchteschwelle 3, Automatic oder Monitoring (Tastendruck)",
         button_press=True,
+        possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
     "01B604B3": DecodedFrame(
         raw="01B604B3",
         category=FrameCategory.CONTROL,
-        mode=Mode.MONITORING,
+        mode=Mode.UNKNOWN,
         humidity_level=3,
         checksum_valid=True,
-        description="Überwachung, Feuchteschwelle 3",
+        description="Feuchteschwelle 3, Automatic oder Monitoring",
+        possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
 
     # Filter-Reset im Überwachungsmodus, beobachtet bei Schwelle 1.
@@ -418,19 +470,24 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         category=FrameCategory.CONTROL,
         mode=Mode.MONITORING,
         humidity_level=1,
+        phase=Phase.FIXED,
         checksum_valid=True,
         description="Filter-Reset (Tastendruck)",
         button_press=True,
         filter_reset=True,
+        possible_modes=(Mode.MONITORING,),
     ),
     "01360532": DecodedFrame(
         raw="01360532",
         category=FrameCategory.CONTROL,
         mode=Mode.MONITORING,
         humidity_level=1,
+        phase=Phase.FIXED,
         checksum_valid=True,
         description="Filter-Reset",
+        button_press=False,
         filter_reset=True,
+        possible_modes=(Mode.MONITORING,),
     ),
 
     # Silent
@@ -441,6 +498,7 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         speed=1,
         phase=Phase.PHASE_A,
         checksum_valid=True,
+        operating_state=OperatingState.ALTERNATING,
     ),
     "01200021": DecodedFrame(
         raw="01200021",
@@ -449,6 +507,7 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         speed=1,
         phase=Phase.TRANSITION,
         checksum_valid=True,
+        operating_state=OperatingState.TRANSITION,
     ),
     "01240025": DecodedFrame(
         raw="01240025",
@@ -457,6 +516,7 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         speed=1,
         phase=Phase.PHASE_B,
         checksum_valid=True,
+        operating_state=OperatingState.ALTERNATING,
     ),
 }
 
@@ -621,6 +681,17 @@ def decode_frame(source: str, payload: str) -> DecodedFrame:
         checksum_valid=False,
         description="Unknown or malformed frame",
     )
+
+
+def candidate_modes(frame: DecodedFrame) -> tuple[Mode, ...]:
+    """Return all selected panel modes compatible with a frame."""
+    if frame.possible_modes:
+        return frame.possible_modes
+
+    if frame.mode is not Mode.UNKNOWN:
+        return (frame.mode,)
+
+    return ()
 
 
 def filter_alarm_from_reply(payload: str) -> bool | None:

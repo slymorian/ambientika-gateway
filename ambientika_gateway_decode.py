@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
-"""Transparentes Ambientika-RS485-Decoder-Gateway.
+"""Transparentes Ambientika-RS485-Decode-Gateway.
 
 Dateiposition auf dem Raspberry:
-    /home/stefan/ambientika/ambientika_gateway_decoder.py
+    /home/stefan/ambientika/ambientika_gateway_decode.py
 
 Die Protokolldefinition wird aus dem src-Layout geladen:
     /home/stefan/ambientika/src/ambientika_gateway/protocol.py
@@ -21,7 +21,6 @@ from typing import Callable
 
 import serial
 
-# Das Skript liegt im Projektstamm, das Python-Paket unter ./src.
 PROJECT_ROOT = Path(__file__).resolve().parent
 SRC_DIRECTORY = PROJECT_ROOT / "src"
 
@@ -33,9 +32,9 @@ try:
         DecodedFrame,
         FrameCategory,
         Mode,
+        OperatingState,
         Phase,
         decode_frame,
-        is_valid_control_frame,
     )
 except ImportError as exc:
     raise SystemExit(
@@ -90,6 +89,10 @@ def optional_bool_text(value: bool | None) -> str:
     return ""
 
 
+def possible_modes_text(state: DecodedFrame) -> str:
+    return ",".join(enum_value(mode) for mode in state.possible_modes)
+
+
 def decode(source: str, payload: str) -> DecodedFrame:
     return decode_frame(
         source_for_protocol(source),
@@ -112,12 +115,12 @@ class FrameParser:
 
     def feed(self, data: bytes) -> None:
         for value in data:
-            if value == 0x02:  # STX
+            if value == 0x02:
                 self.buffer = bytearray()
                 self.in_frame = True
                 continue
 
-            if value == 0x03 and self.in_frame:  # ETX
+            if value == 0x03 and self.in_frame:
                 payload = self.buffer.decode(
                     "ascii",
                     errors="replace",
@@ -132,7 +135,6 @@ class FrameParser:
             if self.in_frame:
                 self.buffer.append(value)
 
-                # Schutz vor beschädigten oder nie abgeschlossenen Frames.
                 if len(self.buffer) > 128:
                     self.buffer = bytearray()
                     self.in_frame = False
@@ -164,7 +166,6 @@ class StateTracker:
             self.last_control_payload = payload
             return True
 
-        # Abfragen, Antworten, Startmeldungen und unbekannte Frames anzeigen.
         return True
 
 
@@ -202,11 +203,13 @@ def write_csv(
                         if state.mode is Mode.UNKNOWN
                         else enum_value(state.mode)
                     ),
+                    possible_modes_text(state),
                     (
-                        state.speed
-                        if state.speed is not None
-                        else ""
+                        ""
+                        if state.operating_state is OperatingState.UNKNOWN
+                        else enum_value(state.operating_state)
                     ),
+                    state.speed if state.speed is not None else "",
                     (
                         state.humidity_level
                         if state.humidity_level is not None
@@ -236,6 +239,17 @@ def state_details(state: DecodedFrame) -> list[str]:
 
     if state.mode is not Mode.UNKNOWN:
         details.append(f"mode={enum_value(state.mode)}")
+
+    if state.possible_modes:
+        details.append(
+            "possible_modes="
+            + ",".join(enum_value(mode) for mode in state.possible_modes)
+        )
+
+    if state.operating_state is not OperatingState.UNKNOWN:
+        details.append(
+            f"operating_state={enum_value(state.operating_state)}"
+        )
 
     if state.speed is not None:
         details.append(f"speed={state.speed}")
@@ -333,7 +347,6 @@ def forward(
             if not data:
                 continue
 
-            # Erst analysieren und anschließend unverändert weiterreichen.
             parser.feed(data)
 
             with destination_lock:
@@ -380,6 +393,8 @@ def create_log_file() -> None:
                 "payload",
                 "category",
                 "mode",
+                "possible_modes",
+                "operating_state",
                 "speed",
                 "humidity_level",
                 "phase",
@@ -414,7 +429,10 @@ def main() -> int:
     print("Öffne Ambientika-Busse …")
     print(f"  Panel:      {PANEL_PORT}")
     print(f"  Lüfter:     {FANS_PORT}")
-    print(f"  Protokoll:  {SRC_DIRECTORY / 'ambientika_gateway' / 'protocol.py'}")
+    print(
+        "  Protokoll:  "
+        f"{SRC_DIRECTORY / 'ambientika_gateway' / 'protocol.py'}"
+    )
     print(f"  Log:        {LOG_FILE}")
     print()
 
@@ -469,7 +487,7 @@ def main() -> int:
     panel_thread.start()
     fans_thread.start()
 
-    print("Transparentes Decoder-Gateway läuft.")
+    print("Transparentes Decode-Gateway läuft.")
     print("Abbruch mit Strg+C.\n")
 
     try:
