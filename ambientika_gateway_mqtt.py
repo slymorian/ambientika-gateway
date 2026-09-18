@@ -29,7 +29,7 @@ CONTROL_SEND_INTERVAL = 0.5
 # MQTT
 # ---------------------------------------------------------
 
-MQTT_HOST = "192.0.2.204"
+MQTT_HOST = "xxx.xxx.x.xxx"
 MQTT_PORT = 1883
 MQTT_USER = os.environ.get("AMBIENTIKA_MQTT_USER", "")
 MQTT_PASSWORD = os.environ.get("AMBIENTIKA_MQTT_PASSWORD", "")
