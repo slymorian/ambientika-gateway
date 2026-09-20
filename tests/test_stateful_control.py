@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from ambientika_gateway.config import MqttConfig
 from ambientika_gateway.discovery import build_discovery_payload
@@ -65,7 +66,11 @@ class StatefulControlTests(unittest.TestCase):
 
     def test_humidity_alarm_updates_observed_state(self) -> None:
         state = GatewayState()
-        alarm = decode_frame("fans", "000808")
+        # Mechanismus-Test: Eine Master-Antwort mit humidity_alarm=True wird
+        # übernommen. Die Antwort ist synthetisch, weil aktuell keine Antwort
+        # mit belegter Alarmbedeutung bekannt ist (000808 trägt den Alarm
+        # nicht, Messung 20.09.2026; 000909 ist unbelegt).
+        alarm = replace(decode_frame("fans", "000808"), humidity_alarm=True)
         state.update_fan_reply(alarm)
         self.assertTrue(state.snapshot().humidity_alarm)
 

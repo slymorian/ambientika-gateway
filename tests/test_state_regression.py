@@ -212,5 +212,27 @@ class StateRegressionTests(unittest.TestCase):
         self.assertIs(state.active_state().humidity_alarm, True)
 
 
+    def test_standard_fan_reply_does_not_assert_humidity_alarm(self) -> None:
+        state = GatewayState()
+        self._feed_panel(state, "01AA00AB")
+
+        # 000808 ist die Standardantwort des Masters und trägt keine
+        # Alarminformation (Messung 20.09.2026, LED an und aus: gleiche Antwort).
+        state.update_fan_reply(decode_frame("fans", "000808"))
+        self.assertIsNone(state.fan_reply_state().humidity_alarm)
+        self.assertIsNone(state.active_state().humidity_alarm)
+
+        # Auch im Override darf daraus kein Alarm abgeleitet werden.
+        state.mark_active_override_frame(
+            raw_frame="01AA00AB",
+            mode=Mode.MANUAL_ALTERNATING,
+            speed=2,
+            humidity=2,
+            operating_state=OperatingState.ALTERNATING,
+            phase=Phase.PHASE_A,
+        )
+        self.assertIsNone(state.active_state().humidity_alarm)
+
+
 if __name__ == "__main__":
     unittest.main()

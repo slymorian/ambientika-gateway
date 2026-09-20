@@ -602,12 +602,18 @@ SHORT_FRAMES: dict[tuple[str, str], DecodedFrame] = {
         description="Kurze Statusantwort des Masters",
         status_byte=0x02,
     ),
+    # 000808 ist die Standardantwort des Masters. Beobachtung 20.09.2026 bei
+    # Panel-Steuerung (control_source=panel): dieselbe Antwort 000808 bei
+    # Auto mit roter Master-LED AN und bei Nachtmodus mit LED AUS, über
+    # mehrere Minuten und drei Zustandswechsel hinweg. Die Antwort trägt den
+    # Feuchtealarm damit nicht, humidity_alarm bleibt None (unbekannt).
+    # Früher hart auf True gesetzt (nie belegt); dadurch zeigte Home
+    # Assistant im Override dauerhaft "Feuchtealarm: nass".
     ("fans", "000808"): DecodedFrame(
         raw="000808",
         category=FrameCategory.REPLY,
         description="Erweiterte Statusantwort des Masters",
         filter_alarm=False,
-        humidity_alarm=True,
         status_byte=0x08,
     ),
     ("fans", "000909"): DecodedFrame(
