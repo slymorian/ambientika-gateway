@@ -14,6 +14,29 @@ from .protocol import (
 )
 
 
+def carry_over_humidity_alarm(
+    previous: bool | None,
+    operating_state: OperatingState,
+) -> bool | None:
+    """Decide what remains of a known humidity alarm after a frame that
+    carries no alarm information of its own.
+
+    * Frame describes no physical state (threshold/button frames,
+      unmapped control frames): the alarm state is left untouched
+      (architecture rule E: a threshold frame is not a physical state).
+    * Frame describes a definite physical state (alternating, transition,
+      extract, supply, ...) but has no alarm information: a previously
+      observed alarm is no longer supported by the bus traffic and is
+      retracted to ``False``. Observed on 30.07.2026: Home Assistant kept
+      showing "Feuchtealarm: nass" during clean alternating operation.
+    * An alarm state that was never asserted (``None``) stays ``None``;
+      nothing is invented (an unknown state is not "no alarm").
+    """
+    if previous is True and operating_state is not OperatingState.UNKNOWN:
+        return False
+    return previous
+
+
 class ControlPolicy(str, Enum):
     """How the gateway arbitrates panel and software control."""
 
@@ -178,7 +201,10 @@ class GatewayState:
                 humidity_alarm=(
                     frame.humidity_alarm
                     if frame.humidity_alarm is not None
-                    else previous.humidity_alarm
+                    else carry_over_humidity_alarm(
+                        previous.humidity_alarm,
+                        frame.operating_state,
+                    )
                 ),
                 phase=(
                     frame.phase
@@ -340,7 +366,10 @@ class GatewayState:
             if observed_humidity_alarm is None:
                 observed_humidity_alarm = self._fan_reply.humidity_alarm
             if observed_humidity_alarm is None:
-                observed_humidity_alarm = self._active.humidity_alarm
+                observed_humidity_alarm = carry_over_humidity_alarm(
+                    self._active.humidity_alarm,
+                    operating_state,
+                )
 
             self._active = ActiveState(
                 source="override",
