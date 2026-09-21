@@ -412,21 +412,30 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
 
     # Feuchteschwellen-/Modusrahmen für Automatic und Monitoring.
     #
-    # Diese Frames enthalten die gewählte Feuchteschwelle. Sie beweisen
-    # weder einen aktiven Feuchtealarm noch einen bestimmten physischen
-    # Lüfterzustand. Insbesondere wurde 01B604B3 bei Auto, Schwelle 3,
-    # Feuchtealarm AUS und gleichzeitigem Wechselbetrieb beobachtet.
+    # Diese Frames enthalten die gewählte Feuchteschwelle (Bits 7..6 in
+    # Byte 2, Messung 21.09.2026).
     #
-    # Messung 21.09.2026: In Auto war die rote Master-LED bei Schwelle 1, 2
-    # und 3 an, die Panelframes waren 01360433 / 01760473 / 01B604B3
-    # (gleiches Flagmuster). Der Feuchtealarm steht damit in keinem dieser
-    # Frames; humidity_alarm bleibt bei allen Panelframes None. Die früher
-    # gesetzten Alarmwerte bei 01760473, 01740471, 016A046F und 01620467
-    # hingen nur mit Schwelle 2 und Flag 0x04 zusammen, nicht mit der LED.
+    # Byte 3 = 0x04 ist in Auto der Feuchtealarm (rote Master-LED an).
+    # Messung 21.09.2026 (Auto, Schwelle 3, Feuchte künstlich erhöht):
+    #   LED aus: nur Wechselbetrieb 01AA00AB / 01A200A3 / 01A600A7, Byte 3 = 00
+    #   18:43:28 LED an: 01AA04AF (Byte 3 = 04), 01A204A7, dann 01B604B3
+    #   stabil über 5 min (kein Wechsel, also kein Wechselbetrieb)
+    #   18:49:35 Alarm vorbei: 01B200B3 (10 s), danach wieder 01AA00AB
+    # Zusammen mit den LED-an-Beobachtungen bei Schwelle 1, 2 und 3
+    # (01360433 / 01760473 / 01B604B3) belegt das Byte 3 = 0x04 als Alarm
+    # in Auto. Damit ist auch die frühere Einschätzung "01B604B3 trat bei
+    # Alarm AUS mit Wechselbetrieb auf" für Auto widerlegt.
+    # NICHT geprüft: Monitoring (Überwachung). Die Schwellenframes sind mit
+    # Monitoring kompatibel (possible_modes); ob dort 0x04 dauerhaft gesetzt
+    # ist, ist offen. Der feste Zustand mit Alarm (01360433 / 01760473 /
+    # 01B604B3) ist als Abluft bei Stufe 2 geführt: fest ist belegt (5 min
+    # unverändert), die Richtung folgt aus dem Bitmuster (wie bei 01760077,
+    # beide Lüfter Abluft) und ist noch nicht am Luftstrom geprüft. Byte 3 = 0x02 (01B606B1, LED an, 20.09.2026) ist
+    # unbekannt und deshalb nicht zugeordnet.
     #
-    # Byte 3 = 0x0C wurde beim Tastendruck beobachtet, Byte 3 = 0x04
-    # im anschließend stabilen Zustand. Der Filteralarm wird ausschließlich
-    # aus den Master-Antworten 000808 / 000A0A abgeleitet.
+    # Byte 3 = 0x0C wurde beim Tastendruck beobachtet (0x08 Taste + 0x04).
+    # Der Filteralarm wird ausschließlich aus den Master-Antworten
+    # 000808 / 000A0A abgeleitet.
     "01360C3B": DecodedFrame(
         raw="01360C3B",
         category=FrameCategory.CONTROL,
@@ -441,9 +450,13 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         raw="01360433",
         category=FrameCategory.CONTROL,
         mode=Mode.UNKNOWN,
+        speed=2,
         humidity_level=1,
+        phase=Phase.FIXED,
         checksum_valid=True,
-        description="Feuchteschwelle 1, Automatic oder Monitoring",
+        description="Feuchtealarm-Abluftbetrieb, Schwelle 1 (Auto, Monitoring ungeprüft)",
+        humidity_alarm=True,
+        operating_state=OperatingState.EXTRACT,
         possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
     "01760C7B": DecodedFrame(
@@ -464,7 +477,8 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         humidity_level=2,
         phase=Phase.FIXED,
         checksum_valid=True,
-        description="Feuchteschwelle 2, Automatic oder Monitoring (stabil)",
+        description="Feuchtealarm-Abluftbetrieb, Stufe 2 (Auto, Monitoring ungeprüft)",
+        humidity_alarm=True,
         operating_state=OperatingState.EXTRACT,
         possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
@@ -477,32 +491,85 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         phase=Phase.FIXED,
         checksum_valid=True,
         description=(
-            "Feuchteschwelle 2, Abluftbitmuster, Statusvariante "
-            "(Alarmbedeutung nicht belegt)"
+            "Feuchtealarm-Abluftbetrieb, Stufe 2 "
+            "(beobachtete Statusvariante)"
         ),
+        humidity_alarm=True,
         operating_state=OperatingState.EXTRACT,
         possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
-    # 01720073 war früher als eindeutiges AUTOMATIC / Normalbetrieb geführt.
-    # Messung 21.09.2026 widerlegt das: Der Frame ist das Neutralframe beim
-    # Verlassen von Auto Richtung Nachtmodus (Schwelle 2). Serie je
-    # Schwelle: Tastendruckframe -> Neutralframe -> nach ca. 10 s der erste
-    # Nachtframe:
-    #   Schwelle 1: 0132083B -> 01320033 -> 01280029
-    #   Schwelle 2: 0172087B -> 01720073 -> 01680069
-    #   Schwelle 3: 01B208BB -> 01B200B3 -> 01A800A9
-    # Der Frame beweist weder AUTOMATIC noch einen Alarmzustand, Stufe oder
-    # physischen Zustand. Belegt ist nur die Schwelle (Bits 7..6 in Byte 2).
+    # Übergangsframes aus dem Abluftzustand (beide Lüfter gleiche Richtung)
+    # zurück in einen anderen Zustand, je Schwelle. Dauer jeweils ca. 10 s.
+    #
+    # 01720073 galt früher als eindeutiges AUTOMATIC / Normalbetrieb. Das
+    # ist widerlegt (Messung 21.09.2026). Beobachtet wurde derselbe Frame in
+    # zwei Situationen:
+    #   Alarm endet in Auto (Schwelle 3): 01B604B3 -> 01B200B3 (10 s) ->
+    #     01AA00AB (Wechselbetrieb)
+    #   Wechsel aus Auto mit Alarm in den Nachtmodus:
+    #     Schwelle 1: 0132083B -> 01320033 -> 01280029
+    #     Schwelle 2: 0172087B -> 01720073 -> 01680069
+    #     Schwelle 3: 01B208BB -> 01B200B3 -> 01A800A9
+    # Die Frames beweisen weder AUTOMATIC noch einen Alarm. Belegt sind nur
+    # die Schwelle (Bits 7..6 in Byte 2) und der Übergangscharakter.
+    "01320033": DecodedFrame(
+        raw="01320033",
+        category=FrameCategory.CONTROL,
+        mode=Mode.UNKNOWN,
+        humidity_level=1,
+        phase=Phase.TRANSITION,
+        checksum_valid=True,
+        description="Übergang aus dem Abluftzustand, Schwelle 1 (kein eindeutiger Modus)",
+        operating_state=OperatingState.TRANSITION,
+    ),
     "01720073": DecodedFrame(
         raw="01720073",
         category=FrameCategory.CONTROL,
         mode=Mode.UNKNOWN,
         humidity_level=2,
+        phase=Phase.TRANSITION,
         checksum_valid=True,
-        description=(
-            "Neutralframe beim Verlassen von Auto, Feuchteschwelle 2 "
-            "(kein eindeutiger Modus)"
-        ),
+        description="Übergang aus dem Abluftzustand, Schwelle 2 (kein eindeutiger Modus)",
+        operating_state=OperatingState.TRANSITION,
+    ),
+    "01B200B3": DecodedFrame(
+        raw="01B200B3",
+        category=FrameCategory.CONTROL,
+        mode=Mode.UNKNOWN,
+        humidity_level=3,
+        phase=Phase.TRANSITION,
+        checksum_valid=True,
+        description="Übergang aus dem Abluftzustand, Schwelle 3 (kein eindeutiger Modus)",
+        operating_state=OperatingState.TRANSITION,
+    ),
+    # Auto mit Feuchtealarm, Schwelle 3 (beobachtet 21.09.2026, 18:43-18:44):
+    # der laufende Wechselbetriebszyklus (Stufe 2) trägt Byte 3 = 0x04, danach
+    # geht das Panel in den Abluftzustand 01B604B3.
+    "01AA04AF": DecodedFrame(
+        raw="01AA04AF",
+        category=FrameCategory.CONTROL,
+        mode=Mode.UNKNOWN,
+        speed=2,
+        humidity_level=3,
+        phase=Phase.PHASE_A,
+        checksum_valid=True,
+        description="Wechselbetrieb Phase A mit Feuchtealarm, Schwelle 3",
+        humidity_alarm=True,
+        operating_state=OperatingState.ALTERNATING,
+        possible_modes=(Mode.AUTOMATIC,),
+    ),
+    "01A204A7": DecodedFrame(
+        raw="01A204A7",
+        category=FrameCategory.CONTROL,
+        mode=Mode.UNKNOWN,
+        speed=2,
+        humidity_level=3,
+        phase=Phase.TRANSITION,
+        checksum_valid=True,
+        description="Übergang im Wechselbetrieb mit Feuchtealarm, Schwelle 3",
+        humidity_alarm=True,
+        operating_state=OperatingState.TRANSITION,
+        possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
     "016A046F": DecodedFrame(
         raw="016A046F",
@@ -512,10 +579,8 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         humidity_level=2,
         phase=Phase.PHASE_A,
         checksum_valid=True,
-        description=(
-            "Wechselbetrieb Phase A, Schwelle 2, Flag 0x04 "
-            "(früher als Feuchtealarm gedeutet, nicht belegt)"
-        ),
+        description="WRG-Phase A mit erkanntem Feuchtealarm",
+        humidity_alarm=True,
         operating_state=OperatingState.ALTERNATING,
         possible_modes=(Mode.AUTOMATIC,),
     ),
@@ -527,10 +592,8 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         humidity_level=2,
         phase=Phase.TRANSITION,
         checksum_valid=True,
-        description=(
-            "Übergang im Wechselbetrieb, Schwelle 2, Flag 0x04 "
-            "(früher als Feuchtealarm-Übergang gedeutet, nicht belegt)"
-        ),
+        description="Übergang in den Feuchtealarm-Abluftbetrieb",
+        humidity_alarm=True,
         operating_state=OperatingState.TRANSITION,
         possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
@@ -548,9 +611,13 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         raw="01B604B3",
         category=FrameCategory.CONTROL,
         mode=Mode.UNKNOWN,
+        speed=2,
         humidity_level=3,
+        phase=Phase.FIXED,
         checksum_valid=True,
-        description="Feuchteschwelle 3, Automatic oder Monitoring",
+        description="Feuchtealarm-Abluftbetrieb, Schwelle 3 (Auto, Monitoring ungeprüft)",
+        humidity_alarm=True,
+        operating_state=OperatingState.EXTRACT,
         possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
 
@@ -691,18 +758,24 @@ SHORT_FRAMES: dict[tuple[str, str], DecodedFrame] = {
         description="Kurze Statusantwort des Masters",
         status_byte=0x02,
     ),
-    # 000808 ist die Standardantwort des Masters. Beobachtung 20.09.2026 bei
-    # Panel-Steuerung (control_source=panel): dieselbe Antwort 000808 bei
-    # Auto mit roter Master-LED AN und bei Nachtmodus mit LED AUS, über
-    # mehrere Minuten und drei Zustandswechsel hinweg. Die Antwort trägt den
-    # Feuchtealarm damit nicht, humidity_alarm bleibt None (unbekannt).
-    # Früher hart auf True gesetzt (nie belegt); dadurch zeigte Home
-    # Assistant im Override dauerhaft "Feuchtealarm: nass".
+    # Master-Antwort und Feuchtealarm (Messungen 20./21.09.2026):
+    # 000808 = Feuchte über der eingestellten Schwelle, 000000 = darunter.
+    # Belege 21.09.2026: 18:43:22 000808, 6 s später Panelframe mit Alarmflag
+    # (01AA04AF); 18:49:30 000000, 5 s später Übergangsframe 01B200B3.
+    # Umschalten der Schwelle: 000808 bei Schwelle 1 (17:53:18) und Schwelle 2
+    # (18:06:03), 000000 bei Schwelle 3 (17:58:49), jeweils ca. 70-78 s nach
+    # dem Umschalten (der Master wertet verzögert aus).
+    # Die Antwort ist unabhängig vom Panelmodus: Am 20.09.2026 blieb sie im
+    # Nachtmodus bei LED aus 000808. Die LED leuchtet vermutlich nur in Auto
+    # (im Nachtmodus nicht direkt geprüft). Früher war 000808 auf True
+    # gesetzt, am 20.09. vorübergehend auf None: beides war der Reihe nach
+    # nicht ausreichend belegt; jetzt gilt die Zuordnung oben.
     ("fans", "000808"): DecodedFrame(
         raw="000808",
         category=FrameCategory.REPLY,
-        description="Erweiterte Statusantwort des Masters",
+        description="Erweiterte Statusantwort des Masters; Feuchte über Schwelle",
         filter_alarm=False,
+        humidity_alarm=True,
         status_byte=0x08,
     ),
     ("fans", "000909"): DecodedFrame(
@@ -722,10 +795,13 @@ SHORT_FRAMES: dict[tuple[str, str], DecodedFrame] = {
         filter_alarm=True,
         status_byte=0x0A,
     ),
+    # 000000 tritt beim Start des Masters auf und ebenso, wenn die Feuchte
+    # wieder unter die Schwelle fällt (21.09.2026, 17:58:49 und 18:49:30).
     ("fans", "000000"): DecodedFrame(
         raw="000000",
         category=FrameCategory.STARTUP,
-        description="Start-/Initialisierungstelegramm",
+        description="Start-/Initialisierungstelegramm; Feuchte unter Schwelle",
+        humidity_alarm=False,
         status_byte=0x00,
     ),
     ("fans", "000101"): DecodedFrame(

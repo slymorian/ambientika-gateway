@@ -115,7 +115,7 @@ class ProtocolRegressionTests(unittest.TestCase):
                 self.assertEqual(frame.phase, phase)
                 self.assertEqual(candidate_modes(frame), (Mode.SILENT,))
 
-    def test_humidity_threshold_frames_do_not_claim_physical_state(self) -> None:
+    def test_humidity_threshold_frames_do_not_select_a_unique_mode(self) -> None:
         cases = {
             "01360433": 1,
             "01760473": 2,
@@ -149,27 +149,31 @@ class ProtocolRegressionTests(unittest.TestCase):
                     (Mode.AUTOMATIC, Mode.MONITORING),
                 )
 
-    def test_auto_exit_neutral_frame_does_not_prove_automatic(self) -> None:
-        # Messung 21.09.2026: 01720073 (Schwelle 2) ist das Neutralframe beim
-        # Verlassen von Auto Richtung Nachtmodus, kurz vor dem ersten
-        # Nachtframe (0172087B -> 01720073 -> 01680069). Es galt früher als
-        # eindeutiges AUTOMATIC und setzte im Gateway fälschlich
-        # panel_mode=automatic, während das Panel schon in Nacht/Manuell lief.
-        frame = decode_frame("panel", "01720073")
-        self.assertEqual(frame.category, FrameCategory.CONTROL)
-        self.assertEqual(frame.mode, Mode.UNKNOWN)
-        self.assertEqual(candidate_modes(frame), ())
-        self.assertEqual(frame.humidity_level, 2)
-        self.assertIsNone(frame.speed)
-        self.assertIsNone(frame.humidity_alarm)
-        self.assertEqual(frame.operating_state, OperatingState.UNKNOWN)
+    def test_transition_out_of_extract_frames_do_not_prove_a_mode(self) -> None:
+        # Messung 21.09.2026: 01720073 galt früher als eindeutiges AUTOMATIC.
+        # Es ist ein Übergangsframe (ca. 10 s) aus dem Abluftzustand, je
+        # Schwelle 1/2/3: 01320033 / 01720073 / 01B200B3. Beobachtet beim
+        # Ende des Alarms in Auto (01B604B3 -> 01B200B3 -> 01AA00AB) und beim
+        # Wechsel in den Nachtmodus (0172087B -> 01720073 -> 01680069).
+        cases = {"01320033": 1, "01720073": 2, "01B200B3": 3}
 
-    def test_panel_frames_do_not_claim_a_humidity_alarm(self) -> None:
-        # Messung 21.09.2026: Rote Master-LED war in Auto bei Schwelle 1, 2
-        # und 3 an, die Panelframes waren 01360433 / 01760473 / 01B604B3
-        # (gleiches Flagmuster). Der Feuchtealarm steht in keinem Panelframe.
-        # Die frühere Alarmzuordnung bei 01760473, 01740471, 016A046F und
-        # 01620467 war nicht belegt.
+        for raw, humidity in cases.items():
+            with self.subTest(raw=raw):
+                frame = decode_frame("panel", raw)
+                self.assertEqual(frame.category, FrameCategory.CONTROL)
+                self.assertEqual(frame.mode, Mode.UNKNOWN)
+                self.assertEqual(candidate_modes(frame), ())
+                self.assertEqual(frame.humidity_level, humidity)
+                self.assertEqual(frame.phase, Phase.TRANSITION)
+                self.assertEqual(frame.operating_state, OperatingState.TRANSITION)
+                self.assertIsNone(frame.speed)
+                self.assertIsNone(frame.humidity_alarm)
+
+    def test_alarm_flag_frames_report_humidity_alarm(self) -> None:
+        # Byte 3 = 0x04 ist in Auto der Feuchtealarm (rote Master-LED an).
+        # Messung 21.09.2026, Auto, Schwelle 3: LED aus nur Frames mit
+        # Byte 3 = 00; LED an 01AA04AF, 01A204A7, dann 01B604B3 (5 min stabil).
+        # Ältere Beobachtungen bei Schwelle 1/2 gelten unverändert.
         for raw in (
             "01360433",
             "01760473",
@@ -177,11 +181,42 @@ class ProtocolRegressionTests(unittest.TestCase):
             "01740471",
             "016A046F",
             "01620467",
-            "01720073",
+            "01AA04AF",
+            "01A204A7",
         ):
             with self.subTest(raw=raw):
                 frame = decode_frame("panel", raw)
-                self.assertIsNone(frame.humidity_alarm)
+                self.assertTrue(int(raw[4:6], 16) & 0x04)
+                self.assertIs(frame.humidity_alarm, True)
+
+    def test_frames_without_alarm_flag_do_not_report_alarm(self) -> None:
+        # Wechselbetrieb und Übergangsframes ohne Flag: Auto ohne Alarm
+        # (Messung 21.09.2026) bzw. Manuell. Sie behaupten keinen Alarm.
+        for raw in (
+            "01AA00AB",
+            "01A200A3",
+            "01A600A7",
+            "01A700A6",
+            "01AB00AA",
+            "01720073",
+            "01B200B3",
+        ):
+            with self.subTest(raw=raw):
+                frame = decode_frame("panel", raw)
+                self.assertFalse(int(raw[4:6], 16) & 0x04)
+                self.assertIsNot(frame.humidity_alarm, True)
+
+    def test_alarm_extract_frame_is_stable_without_alternation(self) -> None:
+        # 01B604B3 blieb am 21.09.2026 über 5 min 14 s unverändert (18:44:21
+        # bis 18:49:35): fester Zustand, kein Wechselbetrieb.
+        # Die Richtung (Abluft) folgt aus dem Bitmuster und ist noch nicht am
+        # Luftstrom geprüft.
+        frame = decode_frame("panel", "01B604B3")
+        self.assertEqual(frame.phase, Phase.FIXED)
+        self.assertEqual(frame.operating_state, OperatingState.EXTRACT)
+        self.assertEqual(frame.speed, 2)
+        self.assertEqual(frame.humidity_level, 3)
+        self.assertEqual(candidate_modes(frame), (Mode.AUTOMATIC, Mode.MONITORING))
 
     def test_short_panel_requests(self) -> None:
         cases = {
@@ -197,12 +232,12 @@ class ProtocolRegressionTests(unittest.TestCase):
                 self.assertEqual(frame.filter_reset, filter_reset)
 
     def test_known_fan_replies(self) -> None:
-        # 000808 trägt keine Alarminformation: am 20.09.2026 unverändert bei
-        # Auto/LED an und Nachtmodus/LED aus (siehe protocol.py).
+        # 000808 = Feuchte über der Schwelle (Alarm), 000000 = darunter
+        # (Messungen 20./21.09.2026, siehe protocol.py).
         # 000909 bleibt vorerst unverändert (dazu liegt keine neue Messung vor).
         cases = {
             "000202": (0x02, None, None),
-            "000808": (0x08, False, None),
+            "000808": (0x08, False, True),
             "000909": (0x09, None, True),
             "000A0A": (0x0A, True, None),
         }
@@ -214,6 +249,14 @@ class ProtocolRegressionTests(unittest.TestCase):
                 self.assertEqual(frame.status_byte, status_byte)
                 self.assertEqual(frame.filter_alarm, filter_alarm)
                 self.assertEqual(frame.humidity_alarm, humidity_alarm)
+
+    def test_idle_status_reply_reports_no_humidity_alarm(self) -> None:
+        # 000000 wurde am 21.09.2026 zweimal beim Ende des Alarms beobachtet
+        # (17:58:49 und 18:49:30) und ist außerdem das Startup-Telegramm.
+        frame = decode_frame("fans", "000000")
+        self.assertEqual(frame.category, FrameCategory.STARTUP)
+        self.assertIs(frame.humidity_alarm, False)
+        self.assertEqual(frame.status_byte, 0x00)
 
     def test_manual_alternating_sequences_are_stable(self) -> None:
         expected = {

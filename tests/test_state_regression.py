@@ -32,10 +32,9 @@ def automatic_selection(raw: str) -> DecodedFrame:
 def alarm_frame(raw: str, alarm: bool = True) -> DecodedFrame:
     """Panelframe mit künstlich gesetzter Alarminformation.
 
-    Seit der Messung vom 21.09.2026 trägt kein bekannter Panelframe eine
-    Alarminformation (die rote Master-LED war bei Schwelle 1, 2 und 3 an,
-    die Frames blieben im gleichen Flagmuster). Die Alarmtests prüfen daher
-    nur den Mechanismus im State-Layer.
+    Nur für explizite "kein Alarm"-Werte (False) nötig: Es gibt bisher keinen
+    Panelframe, der Alarm ausdrücklich verneint (Flag 0x00 ist bei
+    Wechselbetriebsframes mit Manuell mehrdeutig).
     """
     return replace(decode_frame("panel", raw), humidity_alarm=alarm)
 
@@ -158,9 +157,9 @@ class StateRegressionTests(unittest.TestCase):
     # beschreiben dagegen keinen physischen Zustand (Architekturregel E)
     # und lassen den Alarmzustand unberührt.
     #
-    # Stand 21.09.2026: Kein bekannter Panelframe trägt Alarminformation
-    # mehr. Die folgenden Tests verwenden deshalb künstlich mit Alarm
-    # versehene Frames (alarm_frame) und prüfen nur den Mechanismus.
+    # Stand 21.09.2026: Byte 3 = 0x04 im Panelframe ist der Feuchtealarm
+    # (Auto, LED an). Die Tests verwenden echte Alarmframes; ein explizites
+    # "kein Alarm" wird künstlich gesetzt (alarm_frame(..., False)).
     # ------------------------------------------------------------------
 
     def _feed_panel(
@@ -184,8 +183,8 @@ class StateRegressionTests(unittest.TestCase):
         self._feed_panel(
             state,
             alarm_frame("01720073", False),
-            alarm_frame("01620467"),
-            alarm_frame("01760473"),
+            "01620467",
+            "01760473",
         )
         self.assertTrue(state.panel_state().humidity_alarm)
         self.assertTrue(state.active_state().humidity_alarm)
@@ -198,7 +197,7 @@ class StateRegressionTests(unittest.TestCase):
 
     def test_alarm_survives_frames_without_physical_state(self) -> None:
         state = GatewayState()
-        self._feed_panel(state, alarm_frame("01760473"))
+        self._feed_panel(state, "01760473")
 
         # Tastendruck- und Schwellenframe beschreiben keinen physischen
         # Zustand und dürfen einen erkannten Alarm nicht löschen.
@@ -208,7 +207,7 @@ class StateRegressionTests(unittest.TestCase):
 
     def test_unmapped_control_frame_does_not_retract_alarm(self) -> None:
         state = GatewayState()
-        self._feed_panel(state, alarm_frame("01760473"))
+        self._feed_panel(state, "01760473")
 
         # 01AC00AD ist formal gültig, aber nicht zugeordnet (UNKNOWN_CONTROL).
         self._feed_panel(state, "01AC00AD")
@@ -229,22 +228,48 @@ class StateRegressionTests(unittest.TestCase):
         self._feed_panel(state, alarm_frame("01720073", False))
         self.assertIs(state.panel_state().humidity_alarm, False)
 
-        # 016A046F / 01620467 sind ALTERNATING bzw. TRANSITION; mit explizit
-        # gesetzter Alarminformation dürfen sie nicht zurückgesetzt werden.
-        for raw in ("016A046F", "01620467", "01760473", "01740471"):
+        # 016A046F / 01620467 sind ALTERNATING bzw. TRANSITION, tragen aber
+        # explizit humidity_alarm=True und dürfen nicht zurückgesetzt werden.
+        for raw in (
+            "016A046F",
+            "01620467",
+            "01760473",
+            "01740471",
+            "01AA04AF",
+            "01A204A7",
+            "01B604B3",
+        ):
             with self.subTest(raw=raw):
-                self._feed_panel(state, alarm_frame(raw))
+                self._feed_panel(state, raw)
                 self.assertIs(state.panel_state().humidity_alarm, True)
                 self.assertIs(state.active_state().humidity_alarm, True)
 
         self._feed_panel(state, alarm_frame("01720073", False))
         self.assertIs(state.panel_state().humidity_alarm, False)
 
+    def test_alarm_cycle_measured_on_2026_09_21(self) -> None:
+        # Auto, Schwelle 3: Wechselbetrieb ohne Alarm, Alarm beginnt,
+        # Abluftzustand, Alarm endet (Rohdaten in messung_M2.txt).
+        state = GatewayState()
+        self._feed_panel(state, "01AA00AB", "01A200A3", "01A600A7")
+        self.assertIsNone(state.panel_state().humidity_alarm)
+
+        self._feed_panel(state, "01AA04AF", "01A204A7", "01B604B3")
+        self.assertIs(state.panel_state().humidity_alarm, True)
+        self.assertIs(state.active_state().humidity_alarm, True)
+
+        # Alarm vorbei: Übergangsframe (definiter Zustand) nimmt den Alarm zurück.
+        self._feed_panel(state, "01B200B3")
+        self.assertIs(state.panel_state().humidity_alarm, False)
+
+        self._feed_panel(state, "01AA00AB")
+        self.assertIs(state.panel_state().humidity_alarm, False)
+
     def test_override_alternating_frame_does_not_inherit_stale_alarm(
         self,
     ) -> None:
         state = GatewayState()
-        self._feed_panel(state, alarm_frame("01760473"))
+        self._feed_panel(state, "01760473")
         self.assertIs(state.active_state().humidity_alarm, True)
 
         # Override-Frame ohne Alarminfo und ohne Fan-Antwort mit Alarminfo.
@@ -260,7 +285,7 @@ class StateRegressionTests(unittest.TestCase):
 
     def test_override_keeps_alarm_when_state_is_not_physical(self) -> None:
         state = GatewayState()
-        self._feed_panel(state, alarm_frame("01760473"))
+        self._feed_panel(state, "01760473")
 
         state.mark_active_override_frame(
             raw_frame="01760C7B",
@@ -273,17 +298,23 @@ class StateRegressionTests(unittest.TestCase):
         self.assertIs(state.active_state().humidity_alarm, True)
 
 
-    def test_standard_fan_reply_does_not_assert_humidity_alarm(self) -> None:
+    def test_fan_reply_sets_and_clears_humidity_alarm(self) -> None:
+        # 000808 = Feuchte über Schwelle, 000000 = darunter (Messungen
+        # 20./21.09.2026). Die Antwort eilt dem Panelframe um ca. 5-6 s voraus.
         state = GatewayState()
         self._feed_panel(state, "01AA00AB")
 
-        # 000808 ist die Standardantwort des Masters und trägt keine
-        # Alarminformation (Messung 20.09.2026, LED an und aus: gleiche Antwort).
         state.update_fan_reply(decode_frame("fans", "000808"))
-        self.assertIsNone(state.fan_reply_state().humidity_alarm)
-        self.assertIsNone(state.active_state().humidity_alarm)
+        self.assertIs(state.fan_reply_state().humidity_alarm, True)
+        self.assertIs(state.active_state().humidity_alarm, True)
 
-        # Auch im Override darf daraus kein Alarm abgeleitet werden.
+        state.update_fan_reply(decode_frame("fans", "000000"))
+        self.assertIs(state.fan_reply_state().humidity_alarm, False)
+        self.assertIs(state.active_state().humidity_alarm, False)
+
+    def test_override_takes_alarm_from_fan_reply(self) -> None:
+        state = GatewayState()
+        state.update_fan_reply(decode_frame("fans", "000808"))
         state.mark_active_override_frame(
             raw_frame="01AA00AB",
             mode=Mode.MANUAL_ALTERNATING,
@@ -292,7 +323,18 @@ class StateRegressionTests(unittest.TestCase):
             operating_state=OperatingState.ALTERNATING,
             phase=Phase.PHASE_A,
         )
-        self.assertIsNone(state.active_state().humidity_alarm)
+        self.assertIs(state.active_state().humidity_alarm, True)
+
+        state.update_fan_reply(decode_frame("fans", "000000"))
+        state.mark_active_override_frame(
+            raw_frame="01AA00AB",
+            mode=Mode.MANUAL_ALTERNATING,
+            speed=2,
+            humidity=2,
+            operating_state=OperatingState.ALTERNATING,
+            phase=Phase.PHASE_A,
+        )
+        self.assertIs(state.active_state().humidity_alarm, False)
 
 
 if __name__ == "__main__":
