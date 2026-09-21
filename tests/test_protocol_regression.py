@@ -77,6 +77,8 @@ class ProtocolRegressionTests(unittest.TestCase):
             "01A600A7": (2, Phase.PHASE_B, OperatingState.ALTERNATING),
             "01A700A6": (3, Phase.PHASE_A, OperatingState.ALTERNATING),
             "01A300A2": (3, Phase.TRANSITION, OperatingState.TRANSITION),
+            # Phase B Stufe 3: beobachtet 21.09.2026 (siehe protocol.py)
+            "01AB00AA": (3, Phase.PHASE_B, OperatingState.ALTERNATING),
         }
         expected_modes = (Mode.AUTOMATIC, Mode.MANUAL_ALTERNATING)
 
@@ -91,10 +93,18 @@ class ProtocolRegressionTests(unittest.TestCase):
                 self.assertEqual(frame.operating_state, operating_state)
 
     def test_silent_sequence_frames_are_unambiguous(self) -> None:
+        # Nachtmodus/Silent mit gespeicherter Schwelle 1 (frühere Messung),
+        # Schwelle 3 und Schwelle 2 (beobachtet 21.09.2026). Die Frames
+        # unterscheiden sich nur in den Schwellenbits von Byte 2.
         cases = {
             "01280029": Phase.PHASE_A,
             "01200021": Phase.TRANSITION,
             "01240025": Phase.PHASE_B,
+            "01A800A9": Phase.PHASE_A,
+            "01A000A1": Phase.TRANSITION,
+            "01A400A5": Phase.PHASE_B,
+            "01680069": Phase.PHASE_A,
+            "01600061": Phase.TRANSITION,
         }
 
         for raw, phase in cases.items():
@@ -139,13 +149,39 @@ class ProtocolRegressionTests(unittest.TestCase):
                     (Mode.AUTOMATIC, Mode.MONITORING),
                 )
 
-    def test_confirmed_automatic_normal_frame_is_unambiguous(self) -> None:
+    def test_auto_exit_neutral_frame_does_not_prove_automatic(self) -> None:
+        # Messung 21.09.2026: 01720073 (Schwelle 2) ist das Neutralframe beim
+        # Verlassen von Auto Richtung Nachtmodus, kurz vor dem ersten
+        # Nachtframe (0172087B -> 01720073 -> 01680069). Es galt früher als
+        # eindeutiges AUTOMATIC und setzte im Gateway fälschlich
+        # panel_mode=automatic, während das Panel schon in Nacht/Manuell lief.
         frame = decode_frame("panel", "01720073")
-        self.assertEqual(frame.mode, Mode.AUTOMATIC)
-        self.assertEqual(candidate_modes(frame), (Mode.AUTOMATIC,))
-        self.assertEqual(frame.speed, 2)
+        self.assertEqual(frame.category, FrameCategory.CONTROL)
+        self.assertEqual(frame.mode, Mode.UNKNOWN)
+        self.assertEqual(candidate_modes(frame), ())
         self.assertEqual(frame.humidity_level, 2)
-        self.assertFalse(frame.humidity_alarm)
+        self.assertIsNone(frame.speed)
+        self.assertIsNone(frame.humidity_alarm)
+        self.assertEqual(frame.operating_state, OperatingState.UNKNOWN)
+
+    def test_panel_frames_do_not_claim_a_humidity_alarm(self) -> None:
+        # Messung 21.09.2026: Rote Master-LED war in Auto bei Schwelle 1, 2
+        # und 3 an, die Panelframes waren 01360433 / 01760473 / 01B604B3
+        # (gleiches Flagmuster). Der Feuchtealarm steht in keinem Panelframe.
+        # Die frühere Alarmzuordnung bei 01760473, 01740471, 016A046F und
+        # 01620467 war nicht belegt.
+        for raw in (
+            "01360433",
+            "01760473",
+            "01B604B3",
+            "01740471",
+            "016A046F",
+            "01620467",
+            "01720073",
+        ):
+            with self.subTest(raw=raw):
+                frame = decode_frame("panel", raw)
+                self.assertIsNone(frame.humidity_alarm)
 
     def test_short_panel_requests(self) -> None:
         cases = {
@@ -192,6 +228,13 @@ class ProtocolRegressionTests(unittest.TestCase):
                 ("01A200A3", 10.0, Phase.TRANSITION),
                 ("01A600A7", 60.0, Phase.PHASE_B),
                 ("01A200A3", 10.0, Phase.TRANSITION),
+            ),
+            # Beobachtet 21.09.2026: B (60 s) -> T (10 s) -> A (60 s) -> T ...
+            3: (
+                ("01A700A6", 60.0, Phase.PHASE_A),
+                ("01A300A2", 10.0, Phase.TRANSITION),
+                ("01AB00AA", 60.0, Phase.PHASE_B),
+                ("01A300A2", 10.0, Phase.TRANSITION),
             ),
         }
 

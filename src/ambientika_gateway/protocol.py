@@ -161,8 +161,8 @@ class OperatingState(str, Enum):
     """Physical operating state commanded on the fan bus.
 
     The selected panel mode and the physical fan state are not always the
-    same. Automatic and Monitoring, for example, share the same extract
-    state while a humidity alarm is active.
+    same. Automatic and Monitoring, for example, share the same threshold
+    frames, so a frame alone does not prove which panel mode is selected.
     """
 
     ALTERNATING = "alternating"
@@ -265,6 +265,10 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
     ),
 
     # Wechselbetrieb, Stufe 3 (z. B. Automatic oder manuell)
+    #
+    # Phase B (01AB00AA) beobachtet am 21.09.2026 bei manuell Stufe 3 und
+    # Schwelle 3: 01AB00AA (60 s) -> 01A300A2 (10 s) -> 01A700A6 (60 s) ->
+    # 01A300A2 (10 s) -> 01AB00AA, zwei vollständige Übergänge.
     "01A700A6": DecodedFrame(
         raw="01A700A6",
         category=FrameCategory.CONTROL,
@@ -284,6 +288,16 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         phase=Phase.TRANSITION,
         checksum_valid=True,
         operating_state=OperatingState.TRANSITION,
+    ),
+    "01AB00AA": DecodedFrame(
+        raw="01AB00AA",
+        category=FrameCategory.CONTROL,
+        mode=Mode.UNKNOWN,
+        possible_modes=(Mode.AUTOMATIC, Mode.MANUAL_ALTERNATING),
+        speed=3,
+        phase=Phase.PHASE_B,
+        checksum_valid=True,
+        operating_state=OperatingState.ALTERNATING,
     ),
 
     # Beide Lüfter dauerhaft Abluft
@@ -403,6 +417,13 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
     # Lüfterzustand. Insbesondere wurde 01B604B3 bei Auto, Schwelle 3,
     # Feuchtealarm AUS und gleichzeitigem Wechselbetrieb beobachtet.
     #
+    # Messung 21.09.2026: In Auto war die rote Master-LED bei Schwelle 1, 2
+    # und 3 an, die Panelframes waren 01360433 / 01760473 / 01B604B3
+    # (gleiches Flagmuster). Der Feuchtealarm steht damit in keinem dieser
+    # Frames; humidity_alarm bleibt bei allen Panelframes None. Die früher
+    # gesetzten Alarmwerte bei 01760473, 01740471, 016A046F und 01620467
+    # hingen nur mit Schwelle 2 und Flag 0x04 zusammen, nicht mit der LED.
+    #
     # Byte 3 = 0x0C wurde beim Tastendruck beobachtet, Byte 3 = 0x04
     # im anschließend stabilen Zustand. Der Filteralarm wird ausschließlich
     # aus den Master-Antworten 000808 / 000A0A abgeleitet.
@@ -443,8 +464,7 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         humidity_level=2,
         phase=Phase.FIXED,
         checksum_valid=True,
-        description="Feuchtealarm-Abluftbetrieb, Stufe 2",
-        humidity_alarm=True,
+        description="Feuchteschwelle 2, Automatic oder Monitoring (stabil)",
         operating_state=OperatingState.EXTRACT,
         possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
@@ -457,23 +477,32 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         phase=Phase.FIXED,
         checksum_valid=True,
         description=(
-            "Feuchtealarm-Abluftbetrieb, Stufe 2 "
-            "(beobachtete Statusvariante)"
+            "Feuchteschwelle 2, Abluftbitmuster, Statusvariante "
+            "(Alarmbedeutung nicht belegt)"
         ),
-        humidity_alarm=True,
         operating_state=OperatingState.EXTRACT,
         possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
+    # 01720073 war früher als eindeutiges AUTOMATIC / Normalbetrieb geführt.
+    # Messung 21.09.2026 widerlegt das: Der Frame ist das Neutralframe beim
+    # Verlassen von Auto Richtung Nachtmodus (Schwelle 2). Serie je
+    # Schwelle: Tastendruckframe -> Neutralframe -> nach ca. 10 s der erste
+    # Nachtframe:
+    #   Schwelle 1: 0132083B -> 01320033 -> 01280029
+    #   Schwelle 2: 0172087B -> 01720073 -> 01680069
+    #   Schwelle 3: 01B208BB -> 01B200B3 -> 01A800A9
+    # Der Frame beweist weder AUTOMATIC noch einen Alarmzustand, Stufe oder
+    # physischen Zustand. Belegt ist nur die Schwelle (Bits 7..6 in Byte 2).
     "01720073": DecodedFrame(
         raw="01720073",
         category=FrameCategory.CONTROL,
-        mode=Mode.AUTOMATIC,
-        speed=2,
+        mode=Mode.UNKNOWN,
         humidity_level=2,
         checksum_valid=True,
-        description="Automatik, Feuchteschwelle 2, Normalbetrieb",
-        humidity_alarm=False,
-        possible_modes=(Mode.AUTOMATIC,),
+        description=(
+            "Neutralframe beim Verlassen von Auto, Feuchteschwelle 2 "
+            "(kein eindeutiger Modus)"
+        ),
     ),
     "016A046F": DecodedFrame(
         raw="016A046F",
@@ -483,8 +512,10 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         humidity_level=2,
         phase=Phase.PHASE_A,
         checksum_valid=True,
-        description="WRG-Phase A mit erkanntem Feuchtealarm",
-        humidity_alarm=True,
+        description=(
+            "Wechselbetrieb Phase A, Schwelle 2, Flag 0x04 "
+            "(früher als Feuchtealarm gedeutet, nicht belegt)"
+        ),
         operating_state=OperatingState.ALTERNATING,
         possible_modes=(Mode.AUTOMATIC,),
     ),
@@ -496,8 +527,10 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         humidity_level=2,
         phase=Phase.TRANSITION,
         checksum_valid=True,
-        description="Übergang in den Feuchtealarm-Abluftbetrieb",
-        humidity_alarm=True,
+        description=(
+            "Übergang im Wechselbetrieb, Schwelle 2, Flag 0x04 "
+            "(früher als Feuchtealarm-Übergang gedeutet, nicht belegt)"
+        ),
         operating_state=OperatingState.TRANSITION,
         possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
@@ -575,6 +608,62 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         phase=Phase.PHASE_B,
         checksum_valid=True,
         operating_state=OperatingState.ALTERNATING,
+    ),
+
+    # Silent/Nachtmodus mit gespeicherter Schwelle 3 und 2.
+    #
+    # Beobachtet am 21.09.2026: Nachtmodus mit Schwelle 3 (01A800A9 ->
+    # 01A000A1 -> 01A400A5, Abstände 60 s / 10 s) und Schwelle 2
+    # (01680069 -> 01600061). Die Frames unterscheiden sich von den Silent-
+    # Frames oben nur in den Schwellenbits (Bits 7..6 in Byte 2); der
+    # Umschaltvorgang der Schwelle per Taste wurde direkt beobachtet
+    # (01A808A1 -> 01280821). Phase B bei Schwelle 2 (01640065) wurde auf
+    # dem Bus noch nicht beobachtet und ist deshalb nicht aufgenommen.
+    # humidity_level bleibt wie bei den übrigen Silent-/Manual-Frames None.
+    "01A800A9": DecodedFrame(
+        raw="01A800A9",
+        category=FrameCategory.CONTROL,
+        mode=Mode.SILENT,
+        speed=1,
+        phase=Phase.PHASE_A,
+        checksum_valid=True,
+        operating_state=OperatingState.ALTERNATING,
+    ),
+    "01A000A1": DecodedFrame(
+        raw="01A000A1",
+        category=FrameCategory.CONTROL,
+        mode=Mode.SILENT,
+        speed=1,
+        phase=Phase.TRANSITION,
+        checksum_valid=True,
+        operating_state=OperatingState.TRANSITION,
+    ),
+    "01A400A5": DecodedFrame(
+        raw="01A400A5",
+        category=FrameCategory.CONTROL,
+        mode=Mode.SILENT,
+        speed=1,
+        phase=Phase.PHASE_B,
+        checksum_valid=True,
+        operating_state=OperatingState.ALTERNATING,
+    ),
+    "01680069": DecodedFrame(
+        raw="01680069",
+        category=FrameCategory.CONTROL,
+        mode=Mode.SILENT,
+        speed=1,
+        phase=Phase.PHASE_A,
+        checksum_valid=True,
+        operating_state=OperatingState.ALTERNATING,
+    ),
+    "01600061": DecodedFrame(
+        raw="01600061",
+        category=FrameCategory.CONTROL,
+        mode=Mode.SILENT,
+        speed=1,
+        phase=Phase.TRANSITION,
+        checksum_valid=True,
+        operating_state=OperatingState.TRANSITION,
     ),
 }
 
@@ -682,6 +771,13 @@ ALTERNATING_SEQUENCES: dict[
         SequenceStep("01A200A3", 10.0, Phase.TRANSITION),
         SequenceStep("01A600A7", 60.0, Phase.PHASE_B),
         SequenceStep("01A200A3", 10.0, Phase.TRANSITION),
+    ),
+    # Stufe 3: Zyklus und Zeiten am 21.09.2026 beobachtet (siehe Frames).
+    (Mode.MANUAL_ALTERNATING, 3): (
+        SequenceStep("01A700A6", 60.0, Phase.PHASE_A),
+        SequenceStep("01A300A2", 10.0, Phase.TRANSITION),
+        SequenceStep("01AB00AA", 60.0, Phase.PHASE_B),
+        SequenceStep("01A300A2", 10.0, Phase.TRANSITION),
     ),
     (Mode.SILENT, 1): (
         SequenceStep("01280029", 60.0, Phase.PHASE_A),

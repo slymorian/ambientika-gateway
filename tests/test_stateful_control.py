@@ -74,7 +74,9 @@ class StatefulControlTests(unittest.TestCase):
         state.update_fan_reply(alarm)
         self.assertTrue(state.snapshot().humidity_alarm)
 
-        normal = decode_frame("panel", "01720073")
+        # 01720073 traegt seit 21.09.2026 keine Alarminformation mehr;
+        # ein "alarmfreier" Panelframe wird kuenstlich gesetzt.
+        normal = replace(decode_frame("panel", "01720073"), humidity_alarm=False)
         state.update_panel_frame(normal)
         state.mark_active_panel_frame(normal)
         self.assertFalse(state.snapshot().humidity_alarm)

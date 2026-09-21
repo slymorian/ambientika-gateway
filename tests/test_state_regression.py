@@ -4,12 +4,40 @@ import unittest
 from dataclasses import replace
 
 from ambientika_gateway.protocol import (
+    DecodedFrame,
     Mode,
     OperatingState,
     Phase,
     decode_frame,
 )
 from ambientika_gateway.state import GatewayState
+
+
+def automatic_selection(raw: str) -> DecodedFrame:
+    """Frame, der Automatic eindeutig auswählt (künstlich gesetzt).
+
+    Seit der Messung vom 21.09.2026 wählt kein zugeordneter Panelframe
+    AUTOMATIC eindeutig aus: 01720073, bisher als solcher geführt, ist das
+    Neutralframe beim Verlassen von Auto. Wie im Manual-Test wird ein
+    bereits sicher bekannter Panelmodus deshalb künstlich gesetzt, ohne die
+    Produktions-API zu ändern.
+    """
+    return replace(
+        decode_frame("panel", raw),
+        mode=Mode.AUTOMATIC,
+        possible_modes=(Mode.AUTOMATIC,),
+    )
+
+
+def alarm_frame(raw: str, alarm: bool = True) -> DecodedFrame:
+    """Panelframe mit künstlich gesetzter Alarminformation.
+
+    Seit der Messung vom 21.09.2026 trägt kein bekannter Panelframe eine
+    Alarminformation (die rote Master-LED war bei Schwelle 1, 2 und 3 an,
+    die Frames blieben im gleichen Flagmuster). Die Alarmtests prüfen daher
+    nur den Mechanismus im State-Layer.
+    """
+    return replace(decode_frame("panel", raw), humidity_alarm=alarm)
 
 
 class StateRegressionTests(unittest.TestCase):
@@ -33,7 +61,7 @@ class StateRegressionTests(unittest.TestCase):
 
     def test_ambiguous_frame_preserves_automatic_mode(self) -> None:
         state = GatewayState()
-        automatic = decode_frame("panel", "01720073")
+        automatic = automatic_selection("01B604B3")
         ambiguous = decode_frame("panel", "01AA00AB")
 
         state.update_panel_frame(automatic)
@@ -72,7 +100,7 @@ class StateRegressionTests(unittest.TestCase):
 
     def test_humidity_threshold_preserves_automatic_mode(self) -> None:
         state = GatewayState()
-        automatic = decode_frame("panel", "01720073")
+        automatic = automatic_selection("01720073")
         threshold = decode_frame("panel", "01B604B3")
 
         state.update_panel_frame(automatic)
@@ -83,10 +111,26 @@ class StateRegressionTests(unittest.TestCase):
         self.assertEqual(state.active_state().mode, Mode.AUTOMATIC)
         self.assertEqual(state.active_state().humidity, 3)
 
+    def test_auto_exit_neutral_frame_does_not_select_automatic(self) -> None:
+        # Beobachtete Serie beim Wechsel Auto -> Nacht, Schwelle 2
+        # (21.09.2026): 0172087B -> 01720073 -> 01680069.
+        state = GatewayState()
+        self._feed_panel(state, "0172087B", "01720073")
+        self.assertEqual(state.panel_state().mode, Mode.UNKNOWN)
+        self.assertEqual(state.active_state().mode, Mode.UNKNOWN)
+        self.assertEqual(state.panel_state().humidity, 2)
+
+        self._feed_panel(state, "01680069")
+        self.assertEqual(state.panel_state().mode, Mode.SILENT)
+        self.assertEqual(state.active_state().mode, Mode.SILENT)
+
     def test_unambiguous_fixed_frame_replaces_previous_mode(self) -> None:
         state = GatewayState()
-        state.update_panel_frame(decode_frame("panel", "01720073"))
+        state.update_panel_frame(automatic_selection("01720073"))
 
+        # Hinweis: 016A006B ist bei Schwelle 2 bitgleich mit dem manuellen
+        # Wechselbetrieb Stufe 2 (Messung 21.09.2026). Die Zuordnung zu
+        # MASTER_SUPPLY_SLAVE_EXTRACT ist unverändert (offen).
         fixed = decode_frame("panel", "016A006B")
         state.update_panel_frame(fixed)
         state.mark_active_panel_frame(fixed)
@@ -113,11 +157,23 @@ class StateRegressionTests(unittest.TestCase):
     # gesehenen Alarm nicht mehr. Reine Schwellen-/Tastendruckframes
     # beschreiben dagegen keinen physischen Zustand (Architekturregel E)
     # und lassen den Alarmzustand unberührt.
+    #
+    # Stand 21.09.2026: Kein bekannter Panelframe trägt Alarminformation
+    # mehr. Die folgenden Tests verwenden deshalb künstlich mit Alarm
+    # versehene Frames (alarm_frame) und prüfen nur den Mechanismus.
     # ------------------------------------------------------------------
 
-    def _feed_panel(self, state: GatewayState, *raws: str) -> None:
-        for raw in raws:
-            frame = decode_frame("panel", raw)
+    def _feed_panel(
+        self,
+        state: GatewayState,
+        *frames: str | DecodedFrame,
+    ) -> None:
+        for item in frames:
+            frame = (
+                decode_frame("panel", item)
+                if isinstance(item, str)
+                else item
+            )
             state.update_panel_frame(frame)
             state.mark_active_panel_frame(frame)
 
@@ -125,7 +181,12 @@ class StateRegressionTests(unittest.TestCase):
         self,
     ) -> None:
         state = GatewayState()
-        self._feed_panel(state, "01720073", "01620467", "01760473")
+        self._feed_panel(
+            state,
+            alarm_frame("01720073", False),
+            alarm_frame("01620467"),
+            alarm_frame("01760473"),
+        )
         self.assertTrue(state.panel_state().humidity_alarm)
         self.assertTrue(state.active_state().humidity_alarm)
 
@@ -137,7 +198,7 @@ class StateRegressionTests(unittest.TestCase):
 
     def test_alarm_survives_frames_without_physical_state(self) -> None:
         state = GatewayState()
-        self._feed_panel(state, "01760473")
+        self._feed_panel(state, alarm_frame("01760473"))
 
         # Tastendruck- und Schwellenframe beschreiben keinen physischen
         # Zustand und dürfen einen erkannten Alarm nicht löschen.
@@ -147,7 +208,7 @@ class StateRegressionTests(unittest.TestCase):
 
     def test_unmapped_control_frame_does_not_retract_alarm(self) -> None:
         state = GatewayState()
-        self._feed_panel(state, "01760473")
+        self._feed_panel(state, alarm_frame("01760473"))
 
         # 01AC00AD ist formal gültig, aber nicht zugeordnet (UNKNOWN_CONTROL).
         self._feed_panel(state, "01AC00AD")
@@ -163,27 +224,27 @@ class StateRegressionTests(unittest.TestCase):
         self.assertIsNone(state.panel_state().humidity_alarm)
         self.assertIsNone(state.active_state().humidity_alarm)
 
-    def test_explicit_alarm_frames_still_set_alarm(self) -> None:
+    def test_explicit_alarm_information_overrides_carry_over(self) -> None:
         state = GatewayState()
-        self._feed_panel(state, "01720073")
+        self._feed_panel(state, alarm_frame("01720073", False))
         self.assertIs(state.panel_state().humidity_alarm, False)
 
-        # 016A046F / 01620467 sind ALTERNATING bzw. TRANSITION, tragen aber
-        # explizit humidity_alarm=True und dürfen nicht zurückgesetzt werden.
+        # 016A046F / 01620467 sind ALTERNATING bzw. TRANSITION; mit explizit
+        # gesetzter Alarminformation dürfen sie nicht zurückgesetzt werden.
         for raw in ("016A046F", "01620467", "01760473", "01740471"):
             with self.subTest(raw=raw):
-                self._feed_panel(state, raw)
+                self._feed_panel(state, alarm_frame(raw))
                 self.assertIs(state.panel_state().humidity_alarm, True)
                 self.assertIs(state.active_state().humidity_alarm, True)
 
-        self._feed_panel(state, "01720073")
+        self._feed_panel(state, alarm_frame("01720073", False))
         self.assertIs(state.panel_state().humidity_alarm, False)
 
     def test_override_alternating_frame_does_not_inherit_stale_alarm(
         self,
     ) -> None:
         state = GatewayState()
-        self._feed_panel(state, "01760473")
+        self._feed_panel(state, alarm_frame("01760473"))
         self.assertIs(state.active_state().humidity_alarm, True)
 
         # Override-Frame ohne Alarminfo und ohne Fan-Antwort mit Alarminfo.
@@ -199,7 +260,7 @@ class StateRegressionTests(unittest.TestCase):
 
     def test_override_keeps_alarm_when_state_is_not_physical(self) -> None:
         state = GatewayState()
-        self._feed_panel(state, "01760473")
+        self._feed_panel(state, alarm_frame("01760473"))
 
         state.mark_active_override_frame(
             raw_frame="01760C7B",
