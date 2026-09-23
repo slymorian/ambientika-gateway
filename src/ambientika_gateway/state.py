@@ -37,6 +37,34 @@ def carry_over_humidity_alarm(
     return previous
 
 
+def resolve_panel_mode(previous_mode: Mode, frame: DecodedFrame) -> Mode:
+    """Decide the panel mode to record for a newly observed frame.
+
+    * A frame that names a definite mode (``frame.mode != UNKNOWN``) always
+      wins.
+    * A frame that leaves the mode ``UNKNOWN`` but names a closed set of
+      candidate modes (``frame.possible_modes``) does not by itself select
+      one of them (architecture rule B). If the previously known mode is
+      not among the candidates, it is no longer supported by the bus
+      traffic and is retracted to ``UNKNOWN`` -- this is evidence against
+      the previous mode, not a guess at a new one. Bug observed
+      23.09.2026: after Silent, an ambiguous Auto/Manual alternating frame
+      kept reporting ``silent`` even though Silent is not one of its
+      candidates.
+    * A frame with no ``possible_modes`` at all (empty tuple) carries no
+      mode evidence whatsoever (e.g. a pure threshold/transition frame)
+      and leaves the previous mode untouched (rule C: an ambiguous frame
+      must not destroy an already known mode).
+    """
+    if frame.mode is not Mode.UNKNOWN:
+        return frame.mode
+
+    if frame.possible_modes and previous_mode not in frame.possible_modes:
+        return Mode.UNKNOWN
+
+    return previous_mode
+
+
 class ControlPolicy(str, Enum):
     """How the gateway arbitrates panel and software control."""
 
@@ -182,11 +210,7 @@ class GatewayState:
             previous = self._panel
             self._panel = PanelState(
                 raw_frame=frame.raw,
-                mode=(
-                    frame.mode
-                    if frame.mode is not Mode.UNKNOWN
-                    else previous.mode
-                ),
+                mode=resolve_panel_mode(previous.mode, frame),
                 speed=frame.speed if frame.speed is not None else previous.speed,
                 humidity=(
                     frame.humidity_level

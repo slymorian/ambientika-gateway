@@ -145,6 +145,65 @@ class StateRegressionTests(unittest.TestCase):
         self.assertEqual(state.active_state().speed, 2)
         self.assertEqual(state.active_state().phase, Phase.FIXED)
 
+    # ------------------------------------------------------------------
+    # State-Layer-Fix 23.09.2026: bekannter Modus bleibt nicht mehr an
+    # mehrdeutigen Frames "kleben", wenn dieser Modus gar nicht zu den
+    # possible_modes des neuen Frames gehört (Architekturprinzip C
+    # verfeinert: nur ein Frame OHNE possible_modes ist wirklich ohne
+    # Evidenz und lässt den bekannten Modus unangetastet; ein Frame MIT
+    # possible_modes, die den bekannten Modus ausschließen, widerlegt ihn
+    # und der Modus wird UNKNOWN -- es wird dabei nicht auf einen der
+    # verbleibenden Kandidaten geraten).
+    # ------------------------------------------------------------------
+
+    def test_incompatible_ambiguous_frame_retracts_stale_silent_mode(
+        self,
+    ) -> None:
+        # Bugfix: Nach dem Nachtmodus blieb der Panelmodus bisher auf
+        # SILENT haengen, auch wenn danach ein Auto-/Manuell-
+        # Wechselbetriebsframe kam. SILENT ist in dessen possible_modes gar
+        # nicht enthalten.
+        state = GatewayState()
+        self._feed_panel(state, "01A800A9")
+        self.assertEqual(state.panel_state().mode, Mode.SILENT)
+
+        self._feed_panel(state, "01AA00AB")
+        self.assertEqual(state.panel_state().mode, Mode.UNKNOWN)
+        self.assertEqual(state.active_state().mode, Mode.UNKNOWN)
+
+    def test_incompatible_ambiguous_frame_retracts_stale_manual_mode(
+        self,
+    ) -> None:
+        state = GatewayState()
+        manual_selection = replace(
+            decode_frame("panel", "01AA00AB"),
+            mode=Mode.MANUAL_ALTERNATING,
+            possible_modes=(Mode.MANUAL_ALTERNATING,),
+        )
+        self._feed_panel(state, manual_selection)
+        self.assertEqual(state.panel_state().mode, Mode.MANUAL_ALTERNATING)
+
+        # 01AA04AF nennt nur AUTOMATIC als Kandidat (Alarm-Wechselbetrieb,
+        # Schwelle 3).
+        self._feed_panel(state, "01AA04AF")
+        self.assertEqual(state.panel_state().mode, Mode.UNKNOWN)
+        self.assertEqual(state.active_state().mode, Mode.UNKNOWN)
+
+    def test_frame_without_possible_modes_preserves_known_mode(self) -> None:
+        # Prinzip C woertlich: ein Frame ganz ohne possible_modes (z. B.
+        # der Uebergangsframe 01720073) traegt keinerlei Modus-Evidenz und
+        # darf einen bekannten Modus nicht antasten, unabhaengig davon,
+        # welcher Modus das ist.
+        state = GatewayState()
+        manual_selection = replace(
+            decode_frame("panel", "01AA00AB"),
+            mode=Mode.MANUAL_ALTERNATING,
+            possible_modes=(Mode.MANUAL_ALTERNATING,),
+        )
+        self._feed_panel(state, manual_selection)
+
+        self._feed_panel(state, "01720073")
+        self.assertEqual(state.panel_state().mode, Mode.MANUAL_ALTERNATING)
 
     # ------------------------------------------------------------------
     # humidity_alarm darf nicht "kleben bleiben"
