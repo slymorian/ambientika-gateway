@@ -571,18 +571,31 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         operating_state=OperatingState.TRANSITION,
         possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
+    # 016A046F widerlegt (Messung 23.09.2026): teilt sich grp/dir/spd mit
+    # 016A006B (MASTER_SUPPLY_SLAVE_EXTRACT). Genau dieses Bitmuster blieb
+    # ohne Alarm-Flag am eigenen Bus 5 min 31 s (Schwelle 2) bzw. 17 min
+    # (Schwelle 3) unveraendert, wenn es ueber den Panel-Flow-Button als
+    # fester Zustand gewaehlt wurde -- kein Beleg fuer Wechselbetrieb.
+    # Die vormalige Einstufung als "Phase A" wurde nur aus der Analogie zur
+    # alarmfreien 0x6x-Automatik-Tabelle uebernommen, nie selbst ueber Zeit
+    # beobachtet. Analog zur bereits als FIXED/EXTRACT gefuehrten
+    # grp=3-Alarmfamilie (01360433/01760473/01B604B3) wird der physische
+    # Zustand daher nicht mehr behauptet. possible_modes erweitert um
+    # MONITORING analog zu 01760473/01620467 (Kurzanleitung: Feuchtigkeits-
+    # sensor und Alarmbetrieb=Abluft sind laut Hersteller in UEBERWACHUNG
+    # und AUTOMATISCH gleichermassen aktiv).
     "016A046F": DecodedFrame(
         raw="016A046F",
         category=FrameCategory.CONTROL,
         mode=Mode.UNKNOWN,
         speed=2,
         humidity_level=2,
-        phase=Phase.PHASE_A,
+        phase=Phase.UNKNOWN,
         checksum_valid=True,
-        description="WRG-Phase A mit erkanntem Feuchtealarm",
+        description="Feuchtealarm bei Zuluft-Bitmuster, physischer Zustand nicht belegt",
         humidity_alarm=True,
-        operating_state=OperatingState.ALTERNATING,
-        possible_modes=(Mode.AUTOMATIC,),
+        operating_state=OperatingState.UNKNOWN,
+        possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
     "01620467": DecodedFrame(
         raw="01620467",

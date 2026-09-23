@@ -218,6 +218,22 @@ class ProtocolRegressionTests(unittest.TestCase):
         self.assertEqual(frame.humidity_level, 3)
         self.assertEqual(candidate_modes(frame), (Mode.AUTOMATIC, Mode.MONITORING))
 
+    def test_alarm_supply_frame_does_not_assert_alternation(self) -> None:
+        # 016A046F teilt sich grp/dir/spd mit 016A006B (MASTER_SUPPLY_
+        # SLAVE_EXTRACT). Messung 23.09.2026 (Flow-Button, Schwelle 2 und 3):
+        # genau dieses Bitmuster blieb ohne Alarm-Flag 5 min 31 s bzw. 17 min
+        # unveraendert -- kein Beleg fuer Wechselbetrieb. Analog zur bereits
+        # als FIXED/EXTRACT behandelten grp=3-Alarmfamilie (01360433/
+        # 01760473/01B604B3) darf 016A046F daher nicht unbelegt als
+        # ALTERNATING/PHASE_A gefuehrt werden.
+        frame = decode_frame("panel", "016A046F")
+        self.assertEqual(frame.phase, Phase.UNKNOWN)
+        self.assertEqual(frame.operating_state, OperatingState.UNKNOWN)
+        self.assertIs(frame.humidity_alarm, True)
+        self.assertEqual(frame.speed, 2)
+        self.assertEqual(frame.humidity_level, 2)
+        self.assertEqual(candidate_modes(frame), (Mode.AUTOMATIC, Mode.MONITORING))
+
     def test_short_panel_requests(self) -> None:
         cases = {
             "020002": False,
