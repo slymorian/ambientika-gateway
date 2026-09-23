@@ -542,21 +542,29 @@ CONTROL_FRAMES: dict[str, DecodedFrame] = {
         description="Übergang aus dem Abluftzustand, Schwelle 3 (kein eindeutiger Modus)",
         operating_state=OperatingState.TRANSITION,
     ),
-    # Auto mit Feuchtealarm, Schwelle 3 (beobachtet 21.09.2026, 18:43-18:44):
-    # der laufende Wechselbetriebszyklus (Stufe 2) trägt Byte 3 = 0x04, danach
-    # geht das Panel in den Abluftzustand 01B604B3.
+    # 01AA04AF widerlegt (Messung 23.09.2026, siehe 016A046F unten fuer die
+    # analoge Schwelle-2-Herleitung): am 21.09.2026 (18:43-18:44) genau
+    # EINMAL beobachtet, mitten in einem bereits laufenden Phase-A-Intervall,
+    # das vor dem Alarm begonnen hatte. Als der Phasentimer regulaer ablief,
+    # ging das Panel NICHT in Phase B, sondern ueber 01A204A7 direkt in den
+    # stabilen Alarmzustand 01B604B3 -- kein Beleg fuer eine fortgesetzte
+    # Alternation mit Alarm, eher das Gegenteil (Alarm beendet die
+    # Alternation). Teilt sich ausserdem grp/dir/spd mit 01AA00AB, das
+    # Messung 23.09.2026 ohne Alarm-Flag 17 Minuten lang als fest bestaetigt
+    # hat. Analog zu 016A046F wird der physische Zustand daher nicht mehr
+    # behauptet; possible_modes um MONITORING erweitert (siehe 016A046F).
     "01AA04AF": DecodedFrame(
         raw="01AA04AF",
         category=FrameCategory.CONTROL,
         mode=Mode.UNKNOWN,
         speed=2,
         humidity_level=3,
-        phase=Phase.PHASE_A,
+        phase=Phase.UNKNOWN,
         checksum_valid=True,
-        description="Wechselbetrieb Phase A mit Feuchtealarm, Schwelle 3",
+        description="Feuchtealarm bei Zuluft-Bitmuster, Schwelle 3, physischer Zustand nicht belegt",
         humidity_alarm=True,
-        operating_state=OperatingState.ALTERNATING,
-        possible_modes=(Mode.AUTOMATIC,),
+        operating_state=OperatingState.UNKNOWN,
+        possible_modes=(Mode.AUTOMATIC, Mode.MONITORING),
     ),
     "01A204A7": DecodedFrame(
         raw="01A204A7",

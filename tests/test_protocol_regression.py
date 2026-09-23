@@ -234,6 +234,24 @@ class ProtocolRegressionTests(unittest.TestCase):
         self.assertEqual(frame.humidity_level, 2)
         self.assertEqual(candidate_modes(frame), (Mode.AUTOMATIC, Mode.MONITORING))
 
+    def test_alarm_zuluft_phase_a_frame_does_not_assert_alternation(self) -> None:
+        # 01AA04AF ist das Schwelle-3-Gegenstueck zu 016A046F (gleiches
+        # grp/dir/spd wie 01AA00AB, mit Alarm-Flag). Messung 21.09.2026
+        # (18:43-18:44): der Frame wurde genau EINMAL beobachtet, mitten in
+        # einem bereits laufenden Phase-A-Intervall, das vor dem Alarm
+        # begonnen hatte. Als der Phasentimer regulaer ablief, ging das
+        # Panel NICHT in Phase B, sondern ueber den Uebergangsframe
+        # 01A204A7 in den stabilen Alarmzustand 01B604B3 -- kein Beleg fuer
+        # eine fortgesetzte Alternation mit Alarm. Analog zu 016A046F wird
+        # der physische Zustand daher nicht mehr behauptet.
+        frame = decode_frame("panel", "01AA04AF")
+        self.assertEqual(frame.phase, Phase.UNKNOWN)
+        self.assertEqual(frame.operating_state, OperatingState.UNKNOWN)
+        self.assertIs(frame.humidity_alarm, True)
+        self.assertEqual(frame.speed, 2)
+        self.assertEqual(frame.humidity_level, 3)
+        self.assertEqual(candidate_modes(frame), (Mode.AUTOMATIC, Mode.MONITORING))
+
     def test_short_panel_requests(self) -> None:
         cases = {
             "020002": False,
