@@ -359,6 +359,23 @@ class GatewayState:
         timestamp = time.monotonic() if sent_at is None else sent_at
         with self._lock:
             panel = self._panel
+            humidity_alarm = panel.humidity_alarm
+            if frame.humidity_alarm is None and self._fan_reply.humidity_alarm is not None:
+                # Der aktuelle Panelframe traegt selbst keine Alarminfo, wir
+                # befinden uns also in der Carry-over-Situation. Die
+                # Masterantwort (fan_reply) ist die einzige Alarmquelle, die
+                # unabhaengig vom Panelmodus funktioniert (belegt fuer Auto
+                # durch Messung M2, fuer Silent durch Messung 23.09.2026: im
+                # Nachtmodus traegt KEIN Panelframe je eine Alarminfo, sodass
+                # ein zuvor auf False gefallener Panel-Carry-over-Wert dort
+                # unbegrenzt "eingerastet" bleibt und eine aktuelle, per
+                # Masterantwort bestaetigte Feuchteueberschreitung
+                # ueberschreiben wuerde). Traegt der aktuelle Frame dagegen
+                # selbst eine explizite Alarminfo, hat diese wie bisher
+                # Vorrang. Der Override-Pfad (mark_active_override_frame)
+                # bevorzugt die Masterantwort bereits so; dieser Pfad zieht
+                # jetzt nach.
+                humidity_alarm = self._fan_reply.humidity_alarm
             self._active = ActiveState(
                 source="panel",
                 raw_frame=frame.raw,
@@ -366,7 +383,7 @@ class GatewayState:
                 speed=panel.speed,
                 humidity=panel.humidity,
                 operating_state=panel.operating_state,
-                humidity_alarm=panel.humidity_alarm,
+                humidity_alarm=humidity_alarm,
                 phase=panel.phase,
                 last_sent_monotonic=timestamp,
             )

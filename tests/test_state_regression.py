@@ -356,6 +356,40 @@ class StateRegressionTests(unittest.TestCase):
         )
         self.assertIs(state.active_state().humidity_alarm, True)
 
+    def test_panel_frame_does_not_override_fresh_fan_reply_alarm(self) -> None:
+        # Bug gefunden 23.09.2026 (Nachtmodus-Messung): carry_over_humidity_alarm
+        # nimmt nur True zurueck; ein einmal auf False gefallener
+        # Panel-Alarmwert bleibt "eingerastet", solange kein Panelframe
+        # explizit True traegt -- im Nachtmodus passiert das nie, da dort
+        # kein Frame ueberhaupt eine Alarminfo traegt. mark_active_panel_frame
+        # uebernahm bisher trotzdem blind den (veralteten) Panel-Wert und
+        # ueberschrieb damit eine ganz frische, per Masterantwort bestaetigte
+        # Feuchteueberschreitung. Beobachtet: 16:52:05 fan_reply=000808 setzt
+        # humidity_alarm=ON, 16:52:35 (naechster Silent-Uebergangsframe ohne
+        # eigene Alarminfo) faellt es wieder auf OFF, obwohl fan_reply
+        # weiterhin 000808 zeigt.
+        state = GatewayState()
+
+        # Sticky False herstellen, wie es am Ende einer frueheren
+        # Auto-Sitzung entsteht (Alarm gesehen, dann durch die naechste
+        # Alternating-Phase zurueckgenommen).
+        self._feed_panel(state, alarm_frame("01AA00AB", True))
+        self._feed_panel(state, "01A200A3")
+        self.assertIs(state.panel_state().humidity_alarm, False)
+
+        # Wechsel in den Nachtmodus; der veraltete False-Wert bleibt haengen,
+        # weil kein Silent-Frame je eine eigene Alarminfo traegt.
+        self._feed_panel(state, "01A800A9")
+
+        # Master meldet unabhaengig vom Panel einen aktuellen Alarm.
+        state.update_fan_reply(decode_frame("fans", "000808"))
+        self.assertIs(state.active_state().humidity_alarm, True)
+
+        # Naechster Silent-Uebergangsframe traegt keine eigene Alarminfo und
+        # darf den aktuellen Alarm nicht mit dem veralteten Panel-Wert
+        # ueberschreiben.
+        self._feed_panel(state, "01A000A1")
+        self.assertIs(state.active_state().humidity_alarm, True)
 
     def test_fan_reply_sets_and_clears_humidity_alarm(self) -> None:
         # 000808 = Feuchte über Schwelle, 000000 = darunter (Messungen
