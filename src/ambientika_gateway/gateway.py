@@ -140,11 +140,30 @@ class AmbientikaGateway:
 
     def wait(self) -> None:
         """
-        Blockiert den Hauptthread, bis stop() aufgerufen wird.
+        Blockiert den Hauptthread, bis stop() aufgerufen wird, oder die
+        serielle Anbindung ausgefallen ist.
+
+        Bei einem Lesefehler (z. B. ein TCP-Verbindungsabbruch beim
+        RS485-zu-Ethernet-Konverter) beenden sich beide Lese-Threads in
+        SerialBus von selbst (siehe SerialBus._panel_to_fans_loop /
+        _fans_to_panel_loop); SerialBus.running wird dann False, obwohl
+        der Python-Prozess selbst weiterläuft. Ohne diese Prüfung würde
+        der Dienst für systemd dauerhaft als "aktiv" gelten, aber keine
+        Frames mehr durchreichen, und Restart=always würde nie greifen.
+        Deshalb kehrt wait() hier zurück; __main__.py ruft danach stop()
+        auf und beendet den Prozess, systemd startet ihn über
+        Restart=always neu.
         """
 
         while not self._stop_event.wait(0.5):
-            pass
+            if not self._serial_bus.running:
+                LOGGER.error(
+                    "Serielle Anbindung ausgefallen (Panel- oder "
+                    "Lüfter-Lesethread beendet); Gateway wird "
+                    "beendet, damit systemd es per Restart=always "
+                    "neu startet"
+                )
+                return
 
     # ---------------------------------------------------------
     # Serielle Frames

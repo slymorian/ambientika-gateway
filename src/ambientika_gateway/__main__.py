@@ -63,14 +63,16 @@ def main() -> int:
         gateway.wait()
 
     except KeyboardInterrupt:
-        gateway.stop()
+        pass
 
     except Exception:
         logger.exception(
             "Unbehandelter Fehler im Ambientika Gateway"
         )
-        gateway.stop()
         return 1
+
+    finally:
+        gateway.stop()
 
     return 0
 
