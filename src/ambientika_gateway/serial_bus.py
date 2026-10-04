@@ -100,6 +100,18 @@ class SerialBus:
     Standardmäßig werden sämtliche Rohbytes transparent weitergereicht.
     Über den Panel-Filter kann das Gateway einzelne Panel-Frames blockieren,
     beispielsweise während eines Home-Assistant-Overrides.
+
+    Panel- und Lüfter-Port werden über ``serial.serial_for_url()`` geöffnet.
+    Das erlaubt wahlweise:
+      - einen lokalen seriellen Gerätepfad (z. B. ``/dev/ambientika-panel``,
+        per udev-Regel auf einen USB-RS485-Dongle abgebildet), oder
+      - eine Netzwerk-URL (z. B. ``socket://192.0.2.138:4196``) für einen
+        RS485-zu-Ethernet-Konverter, der transparent per TCP tunnelt.
+    Ohne "://"-Schema öffnet serial_for_url() intern denselben nativen
+    Treiber wie serial.Serial() -- der USB-Dongle-Fall verhält sich also
+    exakt wie bisher. Baudrate/Bytesize/Parity/Stopbits werden in beiden
+    Fällen durchgereicht; beim Netzwerk-Konverter übernimmt dessen eigene
+    Firmware das tatsächliche RS485-Framing auf dem Bus.
     """
 
     def __init__(
@@ -173,8 +185,8 @@ class SerialBus:
         )
 
         try:
-            panel = serial.Serial(
-                port=self._config.panel_port,
+            panel = serial.serial_for_url(
+                self._config.panel_port,
                 baudrate=self._config.baudrate,
                 bytesize=serial.EIGHTBITS,
                 parity=serial.PARITY_NONE,
@@ -183,8 +195,8 @@ class SerialBus:
                 write_timeout=self._config.write_timeout,
             )
 
-            fans = serial.Serial(
-                port=self._config.fans_port,
+            fans = serial.serial_for_url(
+                self._config.fans_port,
                 baudrate=self._config.baudrate,
                 bytesize=serial.EIGHTBITS,
                 parity=serial.PARITY_NONE,

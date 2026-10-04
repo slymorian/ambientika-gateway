@@ -14,8 +14,13 @@ SupplementaryGroups=dialout
 WorkingDirectory=/home/stefan/ambientika
 EnvironmentFile=/home/stefan/ambientika/.env
 
-ExecStartPre=/usr/bin/test -e /dev/ambientika-panel
-ExecStartPre=/usr/bin/test -e /dev/ambientika-fans
+# Bei lokalen Gerätepfaden (z. B. /dev/ambientika-panel) wird geprüft, ob
+# das Gerät existiert. Bei einer socket://- oder rfc2217://-URL (RS485-zu-
+# Ethernet-Konverter) entfällt diese Prüfung, da es keinen lokalen
+# Gerätepfad gibt -- die Erreichbarkeit stellt das Gateway selbst beim
+# Verbindungsaufbau fest.
+ExecStartPre=/bin/sh -c 'case "${AMBIENTIKA_PANEL_PORT:-/dev/ambientika-panel}" in socket://*|rfc2217://*) ;; *) test -e "${AMBIENTIKA_PANEL_PORT:-/dev/ambientika-panel}" ;; esac'
+ExecStartPre=/bin/sh -c 'case "${AMBIENTIKA_FANS_PORT:-/dev/ambientika-fans}" in socket://*|rfc2217://*) ;; *) test -e "${AMBIENTIKA_FANS_PORT:-/dev/ambientika-fans}" ;; esac'
 
 ExecStart=/home/stefan/ambientika/.venv/bin/ambientika-gateway
 

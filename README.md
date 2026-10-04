@@ -8,14 +8,18 @@ mit Wandpanel.
 ```text
 Wandpanel
     |
-USB-RS485 (Panel-Segment)
+RS485 (Panel-Segment)
     |
 Ambientika Gateway
     |
-USB-RS485 (Lüfter-Segment)
+RS485 (Lüfter-Segment)
     |
 Master + Slave
 ```
+
+Für die RS485-Anbindung werden sowohl lokale USB-RS485-Dongles als auch
+RS485-zu-Ethernet-Konverter unterstützt, siehe Abschnitt
+"Installation und Start".
 
 Das Gateway arbeitet standardmäßig transparent. Bei aktiviertem Override
 werden Panel-Steuerframes blockiert und ein zentral erzeugter Steuerplan an
@@ -96,9 +100,55 @@ python3 -m pip install .
 ambientika-gateway
 ```
 
-Die serielle und MQTT-Konfiguration erfolgt über die bestehenden
-Umgebungsvariablen in `config.py`. Für einen dauerhaften Betrieb liegt eine
-systemd-Unit unter `systemd/ambientika-gateway.service`.
+Die serielle und MQTT-Konfiguration erfolgt über Umgebungsvariablen (per
+`.env`, siehe `EnvironmentFile` in der systemd-Unit), die von `config.py`
+gelesen werden.
+
+### Serielle Anbindung: USB-RS485-Dongle oder RS485-zu-Ethernet-Konverter
+
+`AMBIENTIKA_PANEL_PORT` und `AMBIENTIKA_FANS_PORT` akzeptieren wahlweise:
+
+**USB-RS485-Dongles** (lokaler Gerätepfad, z. B. per udev-Regel auf
+`/dev/ambientika-panel` / `/dev/ambientika-fans` abgebildet):
+
+```
+AMBIENTIKA_PANEL_PORT=/dev/ambientika-panel
+AMBIENTIKA_FANS_PORT=/dev/ambientika-fans
+```
+
+**RS485-zu-Ethernet-Konverter** (z. B. ein Gerät mit zwei unabhängigen
+RS485-Kanälen, jeder Kanal im TCP-Server-/transparenten Modus mit eigener
+IP und Port):
+
+```
+AMBIENTIKA_PANEL_PORT=socket://192.0.2.138:4196
+AMBIENTIKA_FANS_PORT=socket://192.0.2.137:4196
+```
+
+In beiden Fällen gelten dieselben seriellen Einstellungen: 9600 Baud,
+8 Datenbits, keine Parität, 1 Stoppbit (8N1). Beim Konverter übernimmt
+dessen Firmware das eigentliche RS485-Framing auf dem Bus; das Gateway
+öffnet die Verbindung intern über `serial.serial_for_url()`, sodass
+Panel- und Lüfter-Port unabhängig voneinander als lokaler Gerätepfad oder
+als `socket://`-URL konfiguriert werden können.
+
+Um bei einem neu angeschlossenen Konverter herauszufinden, welcher
+physische Kanal Panel bzw. Lüfter ist, und ob die A/B-Polarität stimmt,
+kann rein lesend (ohne etwas auf den Bus zu senden) mitgehört werden:
+
+```bash
+python3 tools/probe_converter.py <ip> <port>
+```
+
+Panel-Traffic zeigt sich an kurzen Abfrage-Frames (`02xxxx`) und
+4-Byte-Steuerframes (`01xxxxxx`), Lüfter-Traffic an kurzen
+Master-Antworten (`00xxxx`). Kommen gar keine oder nur unlesbare Bytes an,
+sind meist A und B am jeweiligen Konverterkanal vertauscht.
+
+Für einen dauerhaften Betrieb liegt eine systemd-Unit unter
+`systemd/ambientika-gateway.service`. Deren `ExecStartPre`-Prüfungen
+überspringen die Existenzprüfung automatisch, wenn der jeweilige Port
+eine `socket://`- oder `rfc2217://`-URL ist.
 
 ## Tests
 
